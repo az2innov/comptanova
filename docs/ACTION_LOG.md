@@ -191,5 +191,54 @@
   - 100% de succès sur l'ensemble des modules (Scope international, Phase 0, Lot 1.1, Lot 1.2, et tests PostgreSQL 16 réels).
 - **Réserves / Prochaines étapes** :
   - Le Lot 1.2 est finalisé et vérifié.
-  - Conformément à la directive d'incrémentalité stricte, le Lot 1.3 (Module 4 — Facturation, Devis, Transformation et Aperçu imprimable) sera exécuté avec respect rigoureux des contrôles de clôture et du périmètre validé.
+  - Contrôles de clôture du Lot 1.2 appliqués au commit `bf9e397` (scanner antimalware clarifié, tests d'inviolabilité des liens signés, matrice de transition des 6 statuts, nettoyage des fichiers orphelins sur échec SQL et blocage des doublons d'écritures).
+
+---
+
+## ACT-0014 — 2026-10-18T21:22:00+01:00 — Implémentation du Lot 1.3 : Module 4 — Facturation des Ventes, Devis, Transformation contrôlée, Règlements, Aperçu imprimable et Cadrage Factur-X / PDP
+- **Objectif** : Implémenter intégralement le Module 4 (Facturation et Devis) de la Phase 1 conformément au cahier des charges et aux directives de pilotage, sans altérer les fondations existantes.
+- **Périmètre & Fichiers modifiés** :
+  - `src/db/database.ts` & `src/db/phase1-readiness-migration.ts` : Ajout de la migration non destructive `007_phase1_lot1_3_quotes_and_invoicing` créant les tables `dossier_numbering_sequences`, `quotes`, `quote_lines`, `invoice_lines`, `invoice_payments` et les colonnes d'enrichissement sur `invoices` (`origin_quote_id`, `credit_note_for_invoice_id`, `cancelled_by_credit_note_id`, `legal_mentions_json`, `third_party_id`, `is_b2b`, `invoice_status`, `finalized_at`, `finalized_by_user_id`).
+  - `src/domain/types.ts` : Types du domaine `Quote`, `QuoteLine`, `QuoteStatus`, `SalesInvoice`, `InvoiceLine`, `InvoicePayment`, `InvoiceWorkflowStatus`, `LegalMentionsPayload`, `FacturXProfile`.
+  - `src/services/invoicing-service.ts` *(NOUVEAU)* : Service métier complet comprenant :
+    1. Séquenceur de numérotation chronologique continu et ininterrompu (`DEV-YYYY-XXXX`, `FAC-YYYY-XXXX`, `AV-YYYY-XXXX`) avec transactions SQL atomiques et verrouillage contre les trous de numérotation.
+    2. Arithmétique monétaire stricte en unités mineures entières (centimes), ventilation de TVA par taux, validation `totalNet + totalVat === totalGross`.
+    3. Mentions légales obligatoires conformes au Code de commerce et au Livre des Procédures Fiscales (art. 242 nonies A, art. 293 B CGI franchise de TVA, pénalités de retard, indemnité forfaitaire légale de 40 € B2B).
+    4. Gestion du cycle de vie des Devis et transformation contrôlée en facture avec protection stricte anti-duplication (statut `CONVERTED`, blocage de reconversion).
+    5. Finalisation irréversible des factures (attribution du numéro officiel définitif, horodatage, inaltérabilité des lignes et montants).
+    6. Annulation par Avoir traçable (`CREDIT_NOTE`) avec motif obligatoire d'au moins 5 caractères et montants strictement négatifs.
+    7. Gestion des règlements multiples et calcul exact du solde restant dû.
+    8. Aperçu imprimable HTML (format A4 `@media print` avec respect de la charte graphique).
+    9. Génération Factur-X XML (Niveau 2, profils `MINIMUM`, `BASIC`, `EN16931`) conforme à la norme franco-allemande / européenne EN 16931.
+    10. Cadrage explicite Niveau 3 (ComptaNova n'est pas une PDP agréée ; connectivité PDP/PPF et e-reporting traités en périmètre distinct).
+  - `src/server.ts` : Exposition des endpoints REST sécurisés :
+    - `POST /api/organizations/:orgId/dossiers/:dossierId/quotes` (création devis)
+    - `GET .../quotes` & `GET .../quotes/:quoteId` (liste et consultation)
+    - `POST .../quotes/:quoteId/convert-to-invoice` (transformation contrôlée)
+    - `POST .../sales-invoices` (création facture brouillon)
+    - `GET .../sales-invoices` & `GET .../sales-invoices/:invId` (liste et consultation)
+    - `POST .../sales-invoices/:invId/finalize` (finalisation officielle)
+    - `POST .../sales-invoices/:invId/credit-note` (création d'avoir)
+    - `POST .../sales-invoices/:invId/payments` (enregistrement de règlement)
+    - `GET .../sales-invoices/:invId/printable` (rendu HTML imprimable A4)
+    - `GET .../sales-invoices/:invId/facturx-xml` (génération flux XML Factur-X)
+  - `src/ui/app-view.ts` : Interface utilisateur complète du Module 4 remplaçant le placeholder `#tab-invoicing` : filtres de factures, liste paginée avec badges de statut (`DRAFT`, `FINALIZED`, `PAID`, `PARTIALLY_PAID`, `CANCELLED`), table des devis, formulaire interactif de création avec calcul dynamique en centimes des remises et TVA, modal de règlement, boutons d'action (Aperçu HTML, XML Factur-X, Avoir, Finaliser) et encart de conformité PDP.
+  - `src/tests/phase1-lot1-3.test.ts` *(NOUVEAU)* : Suite de tests automatisés exhaustive comprenant 12 sous-tests couvrant l'ensemble des règles métier, la sécurité multi-tenant et l'intégration API REST.
+  - `src/tests/phase1-readiness-and-postgres.test.ts` : Actualisation des assertions de schéma : 7 migrations appliquées (001 à 007) et 25 tables vérifiées sur instance réelle PostgreSQL 16 local.
+- **Sauvegarde & Intégrité** :
+  - Sauvegarde de la base de référence avant travaux : `data/backups/app.db.pre-lot-1.3.bak` (SHA-256 : `047bf2a5758b8569b2b45b05cb0c783bf5a5c1cd804d0ed156e0c0503e607f80`).
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **46/46 tests passants** (6 suites de tests, 0 échec, durée `1928.65 ms`).
+  - Validation complète sur les 6 suites :
+    1. Extension scope international (8/8 pass)
+    2. Phase 0 fondations & sécurité (9/9 pass)
+    3. Phase 1 Lot 1.1 layout/design/dossiers (4/4 pass)
+    4. Phase 1 Lot 1.2 collecte documentaire (8/8 pass)
+    5. Phase 1 Lot 1.3 Module 4 facturation/devis (12/12 pass)
+    6. Audit complémentaire Phase 0 & PostgreSQL 16 réel (5/5 pass, 25 tables créées sans erreur)
+- **Réserves / Prochaines étapes** :
+  - Le Lot 1.3 est finalisé et vérifié.
+  - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.3 en attente de la revue et de l'autorisation de l'utilisateur avant d'engager le Lot 1.4 (Module 2 — Tableaux de bord et indicateurs de pilotage).
+
 

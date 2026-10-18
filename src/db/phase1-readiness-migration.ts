@@ -381,7 +381,17 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
     validation_status TEXT NOT NULL CHECK (validation_status IN ('PROPOSED_BY_AI', 'NEEDS_HUMAN_REVIEW', 'RULE_CHECKED', 'VALIDATED_BY_HUMAN', 'REJECTED')),
     rule_version_id TEXT NOT NULL REFERENCES country_config_versions(version_id),
     validated_by_user_id TEXT REFERENCES users(id),
-    validated_at TEXT,
+    origin_quote_id TEXT,
+    credit_note_for_invoice_id TEXT,
+    cancelled_by_credit_note_id TEXT,
+    legal_mentions_json TEXT NOT NULL DEFAULT '{}',
+    third_party_id TEXT,
+    third_party_address TEXT,
+    third_party_siren_or_vat TEXT,
+    is_b2b INTEGER NOT NULL DEFAULT 1 CHECK (is_b2b IN (0, 1)),
+    invoice_status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (invoice_status IN ('DRAFT', 'FINALIZED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED')),
+    finalized_at TEXT,
+    finalized_by_user_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -443,6 +453,95 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
   );
 
   ${MIGRATION_003_PHASE1_READINESS_SQL}
+
+  CREATE TABLE IF NOT EXISTS dossier_numbering_sequences (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    sequence_type TEXT NOT NULL CHECK (sequence_type IN ('QUOTE', 'INVOICE', 'CREDIT_NOTE')),
+    prefix TEXT NOT NULL,
+    fiscal_year INTEGER NOT NULL,
+    last_number INTEGER NOT NULL DEFAULT 0 CHECK (last_number >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(dossier_id, sequence_type, fiscal_year)
+  );
+
+  CREATE TABLE IF NOT EXISTS quotes (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    quote_number TEXT NOT NULL,
+    quote_status TEXT NOT NULL CHECK (quote_status IN ('DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED', 'CONVERTED')),
+    third_party_id TEXT REFERENCES third_parties(id) ON DELETE SET NULL,
+    third_party_name TEXT NOT NULL,
+    third_party_address TEXT,
+    third_party_tax_number TEXT,
+    issue_date TEXT NOT NULL,
+    validity_date TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+    currency_minor_unit_exponent INTEGER NOT NULL DEFAULT 2 CHECK (currency_minor_unit_exponent IN (0, 2, 3, 4)),
+    total_net_minor BIGINT NOT NULL CHECK (total_net_minor >= 0),
+    total_vat_minor BIGINT NOT NULL CHECK (total_vat_minor >= 0),
+    total_gross_minor BIGINT NOT NULL CHECK (total_gross_minor >= 0),
+    notes TEXT,
+    terms_conditions TEXT,
+    converted_to_invoice_id TEXT REFERENCES invoices(id) ON DELETE SET NULL,
+    converted_at TEXT,
+    created_by_user_id TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(dossier_id, quote_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS quote_lines (
+    id TEXT PRIMARY KEY,
+    quote_id TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+    line_number INTEGER NOT NULL CHECK (line_number >= 1),
+    description TEXT NOT NULL,
+    quantity_minor INTEGER NOT NULL DEFAULT 100 CHECK (quantity_minor > 0),
+    unit_price_net_minor BIGINT NOT NULL CHECK (unit_price_net_minor >= 0),
+    discount_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (discount_rate_bps >= 0 AND discount_rate_bps <= 10000),
+    vat_rate_bps INTEGER NOT NULL CHECK (vat_rate_bps >= 0),
+    total_net_minor BIGINT NOT NULL CHECK (total_net_minor >= 0),
+    total_vat_minor BIGINT NOT NULL CHECK (total_vat_minor >= 0),
+    total_gross_minor BIGINT NOT NULL CHECK (total_gross_minor >= 0),
+    general_account_code TEXT NOT NULL DEFAULT '706000',
+    created_at TEXT NOT NULL,
+    UNIQUE(quote_id, line_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS invoice_lines (
+    id TEXT PRIMARY KEY,
+    invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    line_number INTEGER NOT NULL CHECK (line_number >= 1),
+    description TEXT NOT NULL,
+    quantity_minor INTEGER NOT NULL DEFAULT 100 CHECK (quantity_minor > 0),
+    unit_price_net_minor BIGINT NOT NULL CHECK (unit_price_net_minor >= 0),
+    discount_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (discount_rate_bps >= 0 AND discount_rate_bps <= 10000),
+    vat_rate_bps INTEGER NOT NULL CHECK (vat_rate_bps >= 0),
+    total_net_minor BIGINT NOT NULL,
+    total_vat_minor BIGINT NOT NULL,
+    total_gross_minor BIGINT NOT NULL,
+    general_account_code TEXT NOT NULL DEFAULT '706000',
+    created_at TEXT NOT NULL,
+    UNIQUE(invoice_id, line_number)
+  );
+
+  CREATE TABLE IF NOT EXISTS invoice_payments (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    payment_date TEXT NOT NULL,
+    amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
+    currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+    payment_method TEXT NOT NULL CHECK (payment_method IN ('BANK_TRANSFER', 'CHECK', 'CARD', 'DIRECT_DEBIT', 'CASH', 'OTHER')),
+    transaction_reference TEXT,
+    notes TEXT,
+    recorded_by_user_id TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+  );
 
   -- SEC-OPEN-04 : Trigger PostgreSQL 16 garantissant l'inaltérabilité (append-only) de audit_logs
   CREATE OR REPLACE FUNCTION prevent_audit_logs_mutation()

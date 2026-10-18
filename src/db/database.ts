@@ -633,6 +633,126 @@ export const MIGRATIONS: MigrationDefinition[] = [
       CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(organization_id, dossier_id, workflow_status);
     `,
   },
+  {
+    version: "007_phase1_lot1_3_quotes_and_invoicing",
+    description:
+      "Lot 1.3 (Module 4 — Facturation et Devis) : Tables quotes, quote_lines, invoice_lines, invoice_payments, séquences de numérotation ininterrompues et traçabilité des mentions obligatoires LPF.",
+    upSql: `
+      CREATE TABLE IF NOT EXISTS dossier_numbering_sequences (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+        sequence_type TEXT NOT NULL CHECK (sequence_type IN ('QUOTE', 'INVOICE', 'CREDIT_NOTE')),
+        prefix TEXT NOT NULL,
+        fiscal_year INTEGER NOT NULL,
+        last_number INTEGER NOT NULL DEFAULT 0 CHECK (last_number >= 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dossier_id, sequence_type, fiscal_year)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sequences_lookup ON dossier_numbering_sequences(dossier_id, sequence_type, fiscal_year);
+
+      CREATE TABLE IF NOT EXISTS quotes (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+        quote_number TEXT NOT NULL,
+        quote_status TEXT NOT NULL CHECK (quote_status IN ('DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED', 'CONVERTED')),
+        third_party_id TEXT REFERENCES third_parties(id) ON DELETE SET NULL,
+        third_party_name TEXT NOT NULL,
+        third_party_address TEXT,
+        third_party_tax_number TEXT,
+        issue_date TEXT NOT NULL,
+        validity_date TEXT NOT NULL,
+        currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+        currency_minor_unit_exponent INTEGER NOT NULL DEFAULT 2 CHECK (currency_minor_unit_exponent IN (0, 2, 3, 4)),
+        total_net_minor INTEGER NOT NULL CHECK (total_net_minor >= 0),
+        total_vat_minor INTEGER NOT NULL CHECK (total_vat_minor >= 0),
+        total_gross_minor INTEGER NOT NULL CHECK (total_gross_minor >= 0),
+        notes TEXT,
+        terms_conditions TEXT,
+        converted_to_invoice_id TEXT REFERENCES invoices(id) ON DELETE SET NULL,
+        converted_at TEXT,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(dossier_id, quote_number)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_quotes_org_dossier ON quotes(organization_id, dossier_id);
+      CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(organization_id, dossier_id, quote_status);
+
+      CREATE TABLE IF NOT EXISTS quote_lines (
+        id TEXT PRIMARY KEY,
+        quote_id TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+        line_number INTEGER NOT NULL CHECK (line_number >= 1),
+        description TEXT NOT NULL,
+        quantity_minor INTEGER NOT NULL DEFAULT 100 CHECK (quantity_minor > 0),
+        unit_price_net_minor INTEGER NOT NULL CHECK (unit_price_net_minor >= 0),
+        discount_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (discount_rate_bps >= 0 AND discount_rate_bps <= 10000),
+        vat_rate_bps INTEGER NOT NULL CHECK (vat_rate_bps >= 0),
+        total_net_minor INTEGER NOT NULL CHECK (total_net_minor >= 0),
+        total_vat_minor INTEGER NOT NULL CHECK (total_vat_minor >= 0),
+        total_gross_minor INTEGER NOT NULL CHECK (total_gross_minor >= 0),
+        general_account_code TEXT NOT NULL DEFAULT '706000',
+        created_at TEXT NOT NULL,
+        UNIQUE(quote_id, line_number)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_quote_lines_quote ON quote_lines(quote_id);
+
+      CREATE TABLE IF NOT EXISTS invoice_lines (
+        id TEXT PRIMARY KEY,
+        invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        line_number INTEGER NOT NULL CHECK (line_number >= 1),
+        description TEXT NOT NULL,
+        quantity_minor INTEGER NOT NULL DEFAULT 100 CHECK (quantity_minor > 0),
+        unit_price_net_minor INTEGER NOT NULL CHECK (unit_price_net_minor >= 0),
+        discount_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (discount_rate_bps >= 0 AND discount_rate_bps <= 10000),
+        vat_rate_bps INTEGER NOT NULL CHECK (vat_rate_bps >= 0),
+        total_net_minor INTEGER NOT NULL,
+        total_vat_minor INTEGER NOT NULL,
+        total_gross_minor INTEGER NOT NULL,
+        general_account_code TEXT NOT NULL DEFAULT '706000',
+        created_at TEXT NOT NULL,
+        UNIQUE(invoice_id, line_number)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
+
+      CREATE TABLE IF NOT EXISTS invoice_payments (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+        invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        payment_date TEXT NOT NULL,
+        amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+        currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+        payment_method TEXT NOT NULL CHECK (payment_method IN ('BANK_TRANSFER', 'CHECK', 'CARD', 'DIRECT_DEBIT', 'CASH', 'OTHER')),
+        transaction_reference TEXT,
+        notes TEXT,
+        recorded_by_user_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id);
+      CREATE INDEX IF NOT EXISTS idx_invoice_payments_org_dossier ON invoice_payments(organization_id, dossier_id);
+
+      -- Colonnes complémentaires sur invoices
+      ALTER TABLE invoices ADD COLUMN origin_quote_id TEXT REFERENCES quotes(id) ON DELETE SET NULL;
+      ALTER TABLE invoices ADD COLUMN credit_note_for_invoice_id TEXT REFERENCES invoices(id) ON DELETE SET NULL;
+      ALTER TABLE invoices ADD COLUMN cancelled_by_credit_note_id TEXT REFERENCES invoices(id) ON DELETE SET NULL;
+      ALTER TABLE invoices ADD COLUMN legal_mentions_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE invoices ADD COLUMN third_party_id TEXT REFERENCES third_parties(id) ON DELETE SET NULL;
+      ALTER TABLE invoices ADD COLUMN third_party_address TEXT;
+      ALTER TABLE invoices ADD COLUMN third_party_siren_or_vat TEXT;
+      ALTER TABLE invoices ADD COLUMN is_b2b INTEGER NOT NULL DEFAULT 1 CHECK (is_b2b IN (0, 1));
+      ALTER TABLE invoices ADD COLUMN invoice_status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (invoice_status IN ('DRAFT', 'FINALIZED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED'));
+      ALTER TABLE invoices ADD COLUMN finalized_at TEXT;
+      ALTER TABLE invoices ADD COLUMN finalized_by_user_id TEXT REFERENCES users(id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync = getDatabase()): {

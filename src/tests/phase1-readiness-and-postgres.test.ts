@@ -139,6 +139,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
           "004_audit_logs_immutability_triggers",
           "005_phase1_lot1_1_dossier_metadata",
           "006_phase1_lot1_2_document_lifecycle",
+          "007_phase1_lot1_3_quotes_and_invoicing",
         ]
       );
 
@@ -413,8 +414,8 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     const tableCount = Number(lines[lines.length - 1]);
     assert.equal(
       tableCount,
-      20,
-      `Les 20 tables métier du schéma Phase 0 (12) + Phase 1 (8) doivent être créées sans erreur dans PostgreSQL 16 (reçu: ${tableCount})`
+      25,
+      `Les 25 tables métier du schéma Phase 0 (12) + Phase 1 Readiness (8) + Lot 1.3 (5) doivent être créées sans erreur dans PostgreSQL 16 (reçu: ${tableCount})`
     );
   });
 

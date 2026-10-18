@@ -39,6 +39,20 @@ import {
   createDraftEntryFromDocument,
   deleteDocument,
 } from "./services/tenant-service.js";
+import {
+  createQuote,
+  getQuoteDetails,
+  listQuotesForDossier,
+  convertQuoteToInvoice,
+  createSalesInvoice,
+  finalizeSalesInvoice,
+  createCreditNoteForInvoice,
+  recordInvoicePayment,
+  getSalesInvoiceDetails,
+  listSalesInvoicesForDossier,
+  generatePrintableInvoiceHtml,
+  generateFacturXXml,
+} from "./services/invoicing-service.js";
 import { defaultDocumentStorage } from "./services/file-security.js";
 import {
   listAuditLogsForOrganization,
@@ -46,7 +60,7 @@ import {
 } from "./audit/audit-service.js";
 import { runDeterministicSimulation } from "./rules/deterministic-engine.js";
 import { renderAppHtml } from "./ui/app-view.js";
-import { DossierStatus, OrganizationType, SystemRole, DocumentCategory } from "./domain/types.js";
+import { DossierStatus, OrganizationType, SystemRole, DocumentCategory, FacturXProfile } from "./domain/types.js";
 import { CurrencyCode } from "./domain/money.js";
 
 /**
@@ -885,6 +899,241 @@ export function createAppServer(
               db,
             });
             sendJson(res, 200, deleted);
+            return;
+          }
+
+          // --- Module 4 : Facturation, Devis, Règlements & Factur-X (Lot 1.3) ---
+
+          // Liste et création des devis : /api/organizations/:orgId/dossiers/:dossierId/quotes
+          if (method === "GET" && dossierAction === "quotes") {
+            const status = parsedUrl.searchParams.get("status") as any;
+            const quotes = listQuotesForDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              status,
+              db,
+            });
+            sendJson(res, 200, { quotes });
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "quotes") {
+            const body = await readJsonBody(req);
+            const quote = createQuote({
+              session,
+              organizationId: orgId,
+              dossierId,
+              thirdPartyName: String(body.thirdPartyName || ""),
+              thirdPartyId: body.thirdPartyId ? String(body.thirdPartyId) : undefined,
+              thirdPartyAddress: body.thirdPartyAddress ? String(body.thirdPartyAddress) : undefined,
+              thirdPartyTaxNumber: body.thirdPartyTaxNumber ? String(body.thirdPartyTaxNumber) : undefined,
+              issueDate: String(body.issueDate || new Date().toISOString().slice(0, 10)),
+              validityDate: String(body.validityDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)),
+              currency: body.currency as CurrencyCode | undefined,
+              notes: body.notes ? String(body.notes) : undefined,
+              termsConditions: body.termsConditions ? String(body.termsConditions) : undefined,
+              lines: Array.isArray(body.lines) ? body.lines : [],
+              db,
+            });
+            sendJson(res, 201, { quote });
+            return;
+          }
+
+          // Détail d'un devis : GET /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId
+          const quoteDetailMatch = dossierAction.match(/^quotes\/([^/]+)$/);
+          if (method === "GET" && quoteDetailMatch) {
+            const quoteId = decodeURIComponent(quoteDetailMatch[1]!);
+            const quote = getQuoteDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              quoteId,
+              db,
+            });
+            sendJson(res, 200, { quote });
+            return;
+          }
+
+          // Transformation Devis -> Facture : POST /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId/convert-to-invoice
+          const quoteConvertMatch = dossierAction.match(/^quotes\/([^/]+)\/convert-to-invoice$/);
+          if (method === "POST" && quoteConvertMatch) {
+            const quoteId = decodeURIComponent(quoteConvertMatch[1]!);
+            const body = await readJsonBody(req);
+            const invoice = convertQuoteToInvoice({
+              session,
+              organizationId: orgId,
+              dossierId,
+              quoteId,
+              dueDate: body.dueDate ? String(body.dueDate) : undefined,
+              isB2B: body.isB2B !== undefined ? Boolean(body.isB2B) : true,
+              db,
+            });
+            sendJson(res, 201, { invoice });
+            return;
+          }
+
+          // Liste et création des factures de vente : /api/organizations/:orgId/dossiers/:dossierId/sales-invoices
+          if (method === "GET" && dossierAction === "sales-invoices") {
+            const status = parsedUrl.searchParams.get("status") as any;
+            const direction = parsedUrl.searchParams.get("direction") as any;
+            const invoices = listSalesInvoicesForDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              status,
+              direction,
+              db,
+            });
+            sendJson(res, 200, { invoices });
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "sales-invoices") {
+            const body = await readJsonBody(req);
+            const invoice = createSalesInvoice({
+              session,
+              organizationId: orgId,
+              dossierId,
+              thirdPartyName: String(body.thirdPartyName || ""),
+              thirdPartyId: body.thirdPartyId ? String(body.thirdPartyId) : undefined,
+              thirdPartyAddress: body.thirdPartyAddress ? String(body.thirdPartyAddress) : undefined,
+              thirdPartyTaxNumber: body.thirdPartyTaxNumber ? String(body.thirdPartyTaxNumber) : undefined,
+              isB2B: body.isB2B !== undefined ? Boolean(body.isB2B) : true,
+              issueDate: String(body.issueDate || new Date().toISOString().slice(0, 10)),
+              dueDate: body.dueDate ? String(body.dueDate) : undefined,
+              currency: body.currency as CurrencyCode | undefined,
+              lines: Array.isArray(body.lines) ? body.lines : [],
+              db,
+            });
+            sendJson(res, 201, { invoice });
+            return;
+          }
+
+          // Détail d'une facture de vente : GET /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId
+          const invoiceDetailMatch = dossierAction.match(/^sales-invoices\/([^/]+)$/);
+          if (method === "GET" && invoiceDetailMatch) {
+            const invoiceId = decodeURIComponent(invoiceDetailMatch[1]!);
+            const invoice = getSalesInvoiceDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              db,
+            });
+            sendJson(res, 200, { invoice });
+            return;
+          }
+
+          // Finalisation d'une facture de vente : POST /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId/finalize
+          const invoiceFinalizeMatch = dossierAction.match(/^sales-invoices\/([^/]+)\/finalize$/);
+          if (method === "POST" && invoiceFinalizeMatch) {
+            const invoiceId = decodeURIComponent(invoiceFinalizeMatch[1]!);
+            const invoice = finalizeSalesInvoice({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              db,
+            });
+            sendJson(res, 200, { invoice });
+            return;
+          }
+
+          // Émission d'un Avoir (CREDIT_NOTE) : POST /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId/credit-note
+          const invoiceCreditNoteMatch = dossierAction.match(/^sales-invoices\/([^/]+)\/credit-note$/);
+          if (method === "POST" && invoiceCreditNoteMatch) {
+            const invoiceId = decodeURIComponent(invoiceCreditNoteMatch[1]!);
+            const body = await readJsonBody(req);
+            const reason = String(body.reason || "");
+            const result = createCreditNoteForInvoice({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              reason,
+              db,
+            });
+            sendJson(res, 201, result);
+            return;
+          }
+
+          // Enregistrement d'un règlement : POST /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId/payments
+          const invoicePaymentMatch = dossierAction.match(/^sales-invoices\/([^/]+)\/payments$/);
+          if (method === "POST" && invoicePaymentMatch) {
+            const invoiceId = decodeURIComponent(invoicePaymentMatch[1]!);
+            const body = await readJsonBody(req);
+            const result = recordInvoicePayment({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              amountMinor: Number(body.amountMinor),
+              paymentDate: String(body.paymentDate || new Date().toISOString().slice(0, 10)),
+              paymentMethod: (body.paymentMethod || "BANK_TRANSFER") as any,
+              transactionReference: body.transactionReference ? String(body.transactionReference) : undefined,
+              notes: body.notes ? String(body.notes) : undefined,
+              db,
+            });
+            sendJson(res, 201, result);
+            return;
+          }
+
+          // Aperçu imprimable HTML (A4) : GET /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId/printable
+          const invoicePrintableMatch = dossierAction.match(/^sales-invoices\/([^/]+)\/printable$/);
+          if (method === "GET" && invoicePrintableMatch) {
+            const invoiceId = decodeURIComponent(invoicePrintableMatch[1]!);
+            const invoice = getSalesInvoiceDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              db,
+            });
+            const dossier = getClientDossierDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            }).dossier;
+
+            const html = generatePrintableInvoiceHtml({ invoice, dossier });
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "X-Content-Type-Options": "nosniff",
+            });
+            res.end(html);
+            return;
+          }
+
+          // Flux XML Factur-X (Niveau 2) : GET /api/organizations/:orgId/dossiers/:dossierId/sales-invoices/:invId/facturx-xml
+          const invoiceFacturXMatch = dossierAction.match(/^sales-invoices\/([^/]+)\/facturx-xml$/);
+          if (method === "GET" && invoiceFacturXMatch) {
+            const invoiceId = decodeURIComponent(invoiceFacturXMatch[1]!);
+            const profile = (parsedUrl.searchParams.get("profile") || "MINIMUM") as FacturXProfile;
+            const invoice = getSalesInvoiceDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              invoiceId,
+              db,
+            });
+            const dossier = getClientDossierDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            }).dossier;
+
+            const xml = generateFacturXXml({ invoice, dossier, profile });
+            res.writeHead(200, {
+              "Content-Type": "application/xml; charset=utf-8",
+              "Content-Disposition": `attachment; filename="factur-x-${invoice.invoiceNumber}.xml"`,
+              "X-Content-Type-Options": "nosniff",
+            });
+            res.end(xml);
             return;
           }
         }

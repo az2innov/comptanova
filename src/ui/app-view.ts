@@ -775,13 +775,210 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 4 : FACTURATION & DEVIS (Lot 1.3) -->
+      <!-- ONGLET 4 : FACTURATION & DEVIS (Module 4 — Lot 1.3) -->
       <section id="tab-invoicing" class="tab-panel hidden">
-        <div class="card">
-          <h3>Module 4 — Facturation, Devis &amp; Mentions Légales FR (Planifié au Lot 1.3)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Création de devis, transformation en facture en un clic, numérotation séquentielle sans trou et aperçu imprimable — livrés au Lot 1.3.
-          </p>
+        <!-- Bannière explicite Réforme Facturation Électronique & Niveaux Factur-X / PDP -->
+        <div class="card" style="border-left: 4px solid var(--cn-primary); margin-bottom: 1rem; background: var(--cn-surface);">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+              <h3 style="margin:0 0 0.35rem; color:var(--cn-primary);">Module 4 — Facturation des Ventes, Devis &amp; Factur-X</h3>
+              <p style="margin:0; font-size:0.85rem; color:var(--cn-text-secondary); line-height:1.4;">
+                Numérotation continue et traçable, mentions légales LPF/Code de commerce, calculs monétaires stricts en centimes, transformation contrôlée de devis, génération Factur-X XML (Niveau 2) et gestion des règlements.
+              </p>
+            </div>
+            <div style="font-size:0.75rem; background:var(--cn-surface-alt); border:1px solid var(--cn-border); border-radius:4px; padding:6px 10px; max-width:280px;">
+              <strong>Note de conformité PDP (Niveau 3) :</strong> ComptaNova n'est pas une Plateforme de Dématérialisation Partenaire (PDP) agréée. La connectivité PDP/PPF et l'e-reporting font l'objet d'un périmètre distinct d'intégration.
+            </div>
+          </div>
+        </div>
+
+        <!-- Sous-onglets internes : Devis / Factures / Nouveau document -->
+        <div style="display:flex; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.5rem;">
+          <button type="button" id="subtab-btn-invoices" class="btn-primary" style="padding:6px 14px; font-size:0.85rem;">Factures &amp; Avoirs</button>
+          <button type="button" id="subtab-btn-quotes" class="btn-secondary" style="padding:6px 14px; font-size:0.85rem;">Devis clients</button>
+          <button type="button" id="subtab-btn-create" class="btn-secondary" style="padding:6px 14px; font-size:0.85rem;">+ Nouveau devis ou facture</button>
+        </div>
+
+        <!-- VUE FACTURES & AVOIRS -->
+        <div id="subtab-view-invoices" class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.85rem; flex-wrap:wrap; gap:0.5rem;">
+            <h4 style="margin:0;">Factures de vente &amp; Avoirs émis</h4>
+            <div style="display:flex; gap:0.5rem;">
+              <select id="filter-sales-status" style="font-size:0.85rem; padding:4px 8px;">
+                <option value="ALL">Tous les statuts</option>
+                <option value="DRAFT">Brouillons (DRAFT)</option>
+                <option value="FINALIZED">Finalisées (FINALIZED)</option>
+                <option value="PAID">Soldées (PAID)</option>
+                <option value="PARTIALLY_PAID">Partiellement payées</option>
+                <option value="CANCELLED">Annulées par avoir (CANCELLED)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="sales-invoices-empty" class="cn-state-box cn-state-empty hidden">
+            Aucune facture de vente pour ce dossier avec les filtres sélectionnés.
+          </div>
+
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Numéro</th>
+                  <th>Client / Tiers</th>
+                  <th>Émission</th>
+                  <th>Échéance</th>
+                  <th style="text-align:right;">Total HT</th>
+                  <th style="text-align:right;">Total TTC</th>
+                  <th style="text-align:right;">Réglé</th>
+                  <th style="text-align:right;">Reste dû</th>
+                  <th>Statut</th>
+                  <th>Règlement</th>
+                  <th style="text-align:center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sales-invoices-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- VUE DEVIS -->
+        <div id="subtab-view-quotes" class="card hidden">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.85rem; flex-wrap:wrap; gap:0.5rem;">
+            <h4 style="margin:0;">Devis clients émis</h4>
+            <div>
+              <select id="filter-quotes-status" style="font-size:0.85rem; padding:4px 8px;">
+                <option value="ALL">Tous les statuts</option>
+                <option value="DRAFT">Brouillon (DRAFT)</option>
+                <option value="SENT">Envoyé (SENT)</option>
+                <option value="ACCEPTED">Accepté (ACCEPTED)</option>
+                <option value="CONVERTED">Transformé en facture (CONVERTED)</option>
+                <option value="REJECTED">Refusé (REJECTED)</option>
+                <option value="EXPIRED">Expiré (EXPIRED)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="quotes-empty" class="cn-state-box cn-state-empty hidden">
+            Aucun devis enregistré pour ce dossier.
+          </div>
+
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Numéro</th>
+                  <th>Client / Tiers</th>
+                  <th>Date d'émission</th>
+                  <th>Validité</th>
+                  <th style="text-align:right;">Total HT</th>
+                  <th style="text-align:right;">Total TTC</th>
+                  <th>Statut</th>
+                  <th style="text-align:center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="quotes-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- VUE CRÉATION (DEVIS OU FACTURE) -->
+        <div id="subtab-view-create" class="card hidden">
+          <h4 id="invoicing-create-title" style="margin:0 0 1rem;">Créer un nouveau document de vente</h4>
+          <form id="invoicing-create-form">
+            <div class="form-grid" style="margin-bottom:1rem;">
+              <div>
+                <label for="doc-type-select">Type de document</label>
+                <select id="doc-type-select">
+                  <option value="INVOICE">Facture de vente directe</option>
+                  <option value="QUOTE">Devis client</option>
+                </select>
+              </div>
+              <div>
+                <label for="inv-client-name">Nom ou Raison sociale du client *</label>
+                <input id="inv-client-name" required placeholder="Ex: Acme Solutions SARL" />
+              </div>
+              <div>
+                <label for="inv-client-siret">N° SIRET ou TVA intracommunautaire (B2B)</label>
+                <input id="inv-client-siret" placeholder="Ex: 80012345600012 ou FR12800123456" />
+              </div>
+              <div>
+                <label for="inv-client-address">Adresse de facturation</label>
+                <input id="inv-client-address" placeholder="12 boulevard Haussmann, 75009 Paris" />
+              </div>
+              <div>
+                <label for="inv-issue-date">Date d'émission *</label>
+                <input id="inv-issue-date" type="date" required />
+              </div>
+              <div>
+                <label for="inv-due-date">Date d'échéance / Validité *</label>
+                <input id="inv-due-date" type="date" required />
+              </div>
+            </div>
+
+            <!-- Grille des articles/lignes -->
+            <div style="margin-bottom:1rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                <strong style="font-size:0.9rem;">Lignes d'articles / prestations</strong>
+                <button type="button" id="inv-add-line-btn" class="btn-secondary" style="font-size:0.8rem; padding:4px 8px;">+ Ajouter une ligne</button>
+              </div>
+              <table style="width:100%; border-collapse:collapse; font-size:0.85rem;" id="inv-lines-table">
+                <thead>
+                  <tr style="background:var(--cn-surface-alt); border-bottom:1px solid var(--cn-border);">
+                    <th style="padding:6px; text-align:left;">Description *</th>
+                    <th style="padding:6px; width:80px; text-align:right;">Qté</th>
+                    <th style="padding:6px; width:110px; text-align:right;">Prix unit. HT (€)</th>
+                    <th style="padding:6px; width:80px; text-align:right;">Remise %</th>
+                    <th style="padding:6px; width:90px; text-align:right;">TVA</th>
+                    <th style="padding:6px; width:110px; text-align:right;">Total HT (€)</th>
+                    <th style="padding:6px; width:40px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="inv-lines-tbody">
+                  <!-- Ligne 1 par défaut -->
+                  <tr class="inv-line-row">
+                    <td style="padding:6px;"><input class="inv-line-desc" required placeholder="Prestation de conseil..." style="width:96%;" /></td>
+                    <td style="padding:6px;"><input class="inv-line-qty" type="number" step="0.01" min="0.01" value="1.00" style="width:90%; text-align:right;" /></td>
+                    <td style="padding:6px;"><input class="inv-line-pu" type="number" step="0.01" min="0" value="500.00" required style="width:90%; text-align:right;" /></td>
+                    <td style="padding:6px;"><input class="inv-line-disc" type="number" step="0.1" min="0" max="100" value="0" style="width:85%; text-align:right;" /></td>
+                    <td style="padding:6px;">
+                      <select class="inv-line-vat" style="width:95%;">
+                        <option value="2000">20.0 %</option>
+                        <option value="1000">10.0 %</option>
+                        <option value="550">5.5 %</option>
+                        <option value="210">2.1 %</option>
+                        <option value="0">0.0 % (Exonéré/Franchise)</option>
+                      </select>
+                    </td>
+                    <td style="padding:6px; text-align:right; font-weight:600;" class="inv-line-total">500.00 €</td>
+                    <td style="padding:6px; text-align:center;"><button type="button" class="btn-remove-line" style="background:none; border:none; cursor:pointer; color:var(--cn-state-error-text);">✕</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Récapitulatif dynamique des totaux -->
+            <div style="display:flex; justify-content:flex-end; margin-bottom:1.25rem;">
+              <div style="width:320px; font-size:0.9rem; line-height:1.6;">
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--cn-border); padding:4px 0;">
+                  <span style="color:var(--cn-text-secondary);">Total HT :</span>
+                  <span id="inv-summary-ht" style="font-weight:600;">500.00 €</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--cn-border); padding:4px 0;">
+                  <span style="color:var(--cn-text-secondary);">Total TVA :</span>
+                  <span id="inv-summary-tva" style="font-weight:600;">100.00 €</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:1.05rem; font-weight:700; color:var(--cn-primary);">
+                  <span>Total TTC :</span>
+                  <span id="inv-summary-ttc">600.00 €</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem;">
+              <button type="button" id="inv-cancel-create-btn" class="btn-secondary">Annuler</button>
+              <button type="submit" id="inv-submit-create-btn" class="btn-primary">Enregistrer le document (Brouillon)</button>
+            </div>
+          </form>
         </div>
       </section>
 

@@ -253,3 +253,161 @@ export interface AuditLogEntry {
   previousHash: string | null;
   createdAt: string;
 }
+
+// --- Module 4 : Facturation, Devis & Règlements (Lot 1.3) ---
+
+export type QuoteStatus =
+  | "DRAFT"
+  | "SENT"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "EXPIRED"
+  | "CONVERTED";
+
+export type InvoiceWorkflowStatus =
+  | "DRAFT"
+  | "FINALIZED"
+  | "PAID"
+  | "PARTIALLY_PAID"
+  | "CANCELLED";
+
+export type PaymentMethod =
+  | "BANK_TRANSFER"
+  | "CHECK"
+  | "CARD"
+  | "DIRECT_DEBIT"
+  | "CASH"
+  | "OTHER";
+
+export interface LegalMentionsPayload {
+  sellerLegalForm?: string;
+  sellerSirenSiret?: string;
+  sellerRcsRmCity?: string;
+  sellerVatNumber?: string;
+  sellerAddress?: string;
+  buyerName?: string;
+  buyerAddress?: string;
+  buyerVatNumber?: string;
+  buyerSiren?: string;
+  isB2B?: boolean;
+  vatExemptionMention?: string; // ex: "TVA non applicable, art. 293 B du CGI"
+  latePaymentPenaltiesMention?: string;
+  recoveryIndemnityMention?: string; // 40 EUR pour B2B
+  earlyPaymentDiscountMention?: string;
+  paymentDueDate?: string;
+  applicableLawAndJurisdiction?: string;
+  provisionalNotice?: string;
+}
+
+export interface QuoteLine {
+  id: string;
+  quoteId: string;
+  lineNumber: number;
+  description: string;
+  quantityMinor: number; // 100 = 1.00
+  unitPriceNetMinor: number;
+  discountRateBps: number; // 500 = 5%
+  vatRateBps: number; // 2000 = 20%
+  totalNetMinor: number;
+  totalVatMinor: number;
+  totalGrossMinor: number;
+  generalAccountCode: string;
+  createdAt: string;
+}
+
+export interface Quote {
+  id: string;
+  organizationId: string;
+  dossierId: string;
+  quoteNumber: string;
+  quoteStatus: QuoteStatus;
+  thirdPartyId?: string | null;
+  thirdPartyName: string;
+  thirdPartyAddress?: string | null;
+  thirdPartyTaxNumber?: string | null;
+  issueDate: string;
+  validityDate: string;
+  currency: CurrencyCode;
+  currencyMinorUnitExponent: number;
+  totalNetMinor: number;
+  totalVatMinor: number;
+  totalGrossMinor: number;
+  notes?: string | null;
+  termsConditions?: string | null;
+  convertedToInvoiceId?: string | null;
+  convertedAt?: string | null;
+  createdByUserId: string;
+  lines?: QuoteLine[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceLine {
+  id: string;
+  invoiceId: string;
+  lineNumber: number;
+  description: string;
+  quantityMinor: number;
+  unitPriceNetMinor: number;
+  discountRateBps: number;
+  vatRateBps: number;
+  totalNetMinor: number;
+  totalVatMinor: number;
+  totalGrossMinor: number;
+  generalAccountCode: string;
+  createdAt: string;
+}
+
+export interface InvoicePayment {
+  id: string;
+  organizationId: string;
+  dossierId: string;
+  invoiceId: string;
+  paymentDate: string;
+  amountMinor: number;
+  currency: CurrencyCode;
+  paymentMethod: PaymentMethod;
+  transactionReference?: string | null;
+  notes?: string | null;
+  recordedByUserId: string;
+  createdAt: string;
+}
+
+export interface SalesInvoice {
+  id: string;
+  organizationId: string;
+  dossierId: string;
+  documentId?: string | null;
+  direction: "ISSUED" | "RECEIVED" | "CREDIT_NOTE";
+  invoiceNumber: string;
+  thirdPartyName: string;
+  thirdPartyId?: string | null;
+  thirdPartyAddress?: string | null;
+  thirdPartySirenOrVat?: string | null;
+  isB2B: boolean;
+  issueDate: string;
+  dueDate?: string | null;
+  netAmountMinor: number;
+  vatAmountMinor: number;
+  grossAmountMinor: number;
+  paidAmountMinor: number;
+  remainingAmountMinor: number;
+  currency: CurrencyCode;
+  currencyMinorUnitExponent: number;
+  paymentStatus: "UNPAID" | "PARTIALLY_PAID" | "PAID";
+  invoiceStatus: InvoiceWorkflowStatus;
+  originQuoteId?: string | null;
+  creditNoteForInvoiceId?: string | null;
+  cancelledByCreditNoteId?: string | null;
+  legalMentions: LegalMentionsPayload;
+  lines?: InvoiceLine[];
+  payments?: InvoicePayment[];
+  finalizedAt?: string | null;
+  finalizedByUserId?: string | null;
+  ruleVersionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type FacturXProfile = "MINIMUM" | "BASIC" | "EN16931";
+
