@@ -44,9 +44,18 @@ export interface UiDictionary {
   rbacActiveBadge: string;
   aiNonAutoValidatingBadge: string;
   activeOrganizationLabel: string;
+  activeDossierLabel: string;
+  activePeriodLabel: string;
   languageSelectorLabel: string;
   navDashboard: string;
   navDossiers: string;
+  navDocuments: string;
+  navInvoicing: string;
+  navJournal: string;
+  navBanking: string;
+  navVat: string;
+  navSimulator: string;
+  navAnomalies: string;
   navOrganizations: string;
   navUsers: string;
   navCountries: string;
@@ -71,13 +80,22 @@ export const I18N_DICTIONARIES: Record<SupportedLanguageCode, UiDictionary> = {
     rbacActiveBadge: "Contrôle Serveur RBAC Actif",
     aiNonAutoValidatingBadge: "IA Assistive Non Auto-Validante",
     activeOrganizationLabel: "Organisation active (Tenant)",
+    activeDossierLabel: "Dossier client actif",
+    activePeriodLabel: "Période comptable",
     languageSelectorLabel: "Langue & Direction (i18n / RTL)",
     navDashboard: "Tableau de bord",
     navDossiers: "Dossiers clients",
+    navDocuments: "Documents & OCR",
+    navInvoicing: "Facturation & Devis",
+    navJournal: "Journal comptable",
+    navBanking: "Banque & Rapprochement",
+    navVat: "TVA",
+    navSimulator: "Simulateur micro-entrepreneur",
+    navAnomalies: "Anomalies & Contrôles",
     navOrganizations: "Organisations (Tenants)",
     navUsers: "Utilisateurs & Rôles",
     navCountries: "Juridictions & Pays",
-    navSettingsAudit: "Paramètres & Audit SHA-256",
+    navSettingsAudit: "Exports & Paramètres",
     logoutButton: "Déconnexion",
     loginSubmitButton: "Se connecter de manière sécurisée",
     kpiActiveDossiers: "Dossiers clients actifs",
@@ -96,13 +114,22 @@ export const I18N_DICTIONARIES: Record<SupportedLanguageCode, UiDictionary> = {
     rbacActiveBadge: "Server-Side RBAC Active",
     aiNonAutoValidatingBadge: "Non-Auto-Validating Assistive AI",
     activeOrganizationLabel: "Active Organization (Tenant)",
+    activeDossierLabel: "Active Client Dossier",
+    activePeriodLabel: "Accounting Period",
     languageSelectorLabel: "Language & Direction (i18n / RTL)",
     navDashboard: "Dashboard",
     navDossiers: "Client Dossiers",
+    navDocuments: "Documents & OCR",
+    navInvoicing: "Invoicing & Quotes",
+    navJournal: "Accounting Journal",
+    navBanking: "Bank & Reconciliation",
+    navVat: "VAT",
+    navSimulator: "Micro-Entrepreneur Simulator",
+    navAnomalies: "Anomalies & Controls",
     navOrganizations: "Organizations (Tenants)",
     navUsers: "Users & Roles",
     navCountries: "Jurisdictions & Countries",
-    navSettingsAudit: "Settings & SHA-256 Audit",
+    navSettingsAudit: "Exports & Settings",
     logoutButton: "Sign out",
     loginSubmitButton: "Sign in securely",
     kpiActiveDossiers: "Active Client Dossiers",
@@ -121,13 +148,22 @@ export const I18N_DICTIONARIES: Record<SupportedLanguageCode, UiDictionary> = {
     rbacActiveBadge: "تحكم الصلاحيات الخادمي نشط",
     aiNonAutoValidatingBadge: "ذكاء اصطناعي مساعد غير معتمد تلقائياً",
     activeOrganizationLabel: "المؤسسة النشطة (المستأجر)",
+    activeDossierLabel: "ملف العميل النشط",
+    activePeriodLabel: "الفترة المحاسبية",
     languageSelectorLabel: "اللغة والاتجاه (RTL / LTR)",
     navDashboard: "لوحة القيادة",
     navDossiers: "ملفات العملاء",
+    navDocuments: "المستندات والتعرف الضوئي",
+    navInvoicing: "الفوترة وعروض الأسعار",
+    navJournal: "دفتر اليومية المحاسبي",
+    navBanking: "البنك والتسوية البنكية",
+    navVat: "ضريبة القيمة المضافة",
+    navSimulator: "محاكي المقاول الذاتي",
+    navAnomalies: "الاختلالات والضوابط",
     navOrganizations: "المؤسسات (المستأجرون)",
     navUsers: "المستخدمون والأدوار",
     navCountries: "السلطات القضائية والدول",
-    navSettingsAudit: "الإعدادات وسجل التدقيق SHA-256",
+    navSettingsAudit: "التصدير والإعدادات",
     logoutButton: "تسجيل الخروج",
     loginSubmitButton: "تسجيل الدخول بأمان",
     kpiActiveDossiers: "ملفات العملاء النشطة",

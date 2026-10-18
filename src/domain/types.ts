@@ -125,12 +125,19 @@ export interface OrganizationMembership {
  * - la devise de tenue/présentation comptable (`currency`),
  * - les devises de transaction autorisées (`allowedTransactionCurrencies`).
  */
+export type DossierStatus = "ACTIVE" | "TO_COMPLETE" | "SUSPENDED" | "ARCHIVED";
+
 export interface ClientDossier {
   id: string;
   organizationId: string;
   name: string;
   code: string;
+  legalForm?: string;
   legalRegistrationNumber: string | null;
+  vatIntracommunityNumber?: string | null;
+  addressLine?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
   /** Pays d'établissement juridique de l'entité */
   countryCode: string;
   /** Juridiction fiscale applicable (peut différer du pays ISO, ex: zone franche ou sous-juridiction) */
@@ -146,7 +153,19 @@ export interface ClientDossier {
   /** Devises autorisées pour les transactions et comptes bancaires */
   allowedTransactionCurrencies?: CurrencyCode[];
   taxRegimeCode: string;
+  vatRegimeCode?: string;
   fiscalYearStartMonth: number;
+  fiscalYearStartDate?: string | null;
+  fiscalYearEndDate?: string | null;
+  dossierStatus?: DossierStatus;
+  activitySector?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  internalNotes?: string | null;
+  archivedAt?: string | null;
+  archivedByUserId?: string | null;
+  archiveReason?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

@@ -126,7 +126,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     seedDemoData(db);
 
     try {
-      // 3.1 Vérifier que les 4 migrations (001, 002, 003, 004) sont appliquées
+      // 3.1 Vérifier que les 5 migrations (001 à 005) sont appliquées
       const migrations = db
         .prepare(`SELECT version FROM schema_migrations ORDER BY version ASC`)
         .all() as Array<{ version: string }>;
@@ -137,6 +137,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
           "002_international_scope_extension",
           "003_phase1_readiness_schema",
           "004_audit_logs_immutability_triggers",
+          "005_phase1_lot1_1_dossier_metadata",
         ]
       );
 
@@ -645,8 +646,8 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       assert.ok(htmlText.includes("#153D35"), "Primaire #153D35 requis");
       assert.ok(htmlText.includes("#237D68"), "Secondaire #237D68 requis");
       assert.ok(htmlText.includes("#D9A441"), "Accent #D9A441 requis");
-      assert.ok(htmlText.includes("#F7F6F2"), "Fond #F7F6F2 requis");
-      assert.ok(htmlText.includes("#1C2421"), "Texte #1C2421 requis");
+      assert.ok(htmlText.includes("#F7F8FA"), "Fond #F7F8FA (Phase 1 §5) requis");
+      assert.ok(htmlText.includes("#17212B"), "Texte #17212B (Phase 1 §5) requis");
       assert.equal(
         /#1e293b|#334155|#60a5fa|#0f172a/i.test(htmlText),
         false,

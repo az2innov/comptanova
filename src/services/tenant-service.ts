@@ -5,6 +5,7 @@ import {
   Organization,
   OrganizationType,
   ClientDossier,
+  DossierStatus,
   SystemRole,
   User,
   StoredDocument,
@@ -543,20 +544,214 @@ export function listOrganizationMembers(params: {
   }));
 }
 
+function mapClientDossierRow(r: Record<string, unknown>): ClientDossier {
+  let operatingCountries: string[] = [String(r.country_code)];
+  if (
+    typeof r.operating_countries_json === "string" &&
+    r.operating_countries_json
+  ) {
+    try {
+      operatingCountries = JSON.parse(r.operating_countries_json) as string[];
+    } catch {
+      operatingCountries = [String(r.country_code)];
+    }
+  }
+  let allowedCurrencies: CurrencyCode[] = [String(r.currency)];
+  if (
+    typeof r.allowed_currencies_json === "string" &&
+    r.allowed_currencies_json
+  ) {
+    try {
+      allowedCurrencies = JSON.parse(r.allowed_currencies_json) as CurrencyCode[];
+    } catch {
+      allowedCurrencies = [String(r.currency)];
+    }
+  }
+  const isActive = Number(r.is_active) === 1;
+  const rawStatus = (r.dossier_status as string | null) ?? (isActive ? "ACTIVE" : "ARCHIVED");
+  return {
+    id: String(r.id),
+    organizationId: String(r.organization_id),
+    name: String(r.name),
+    code: String(r.code),
+    legalForm: String(r.legal_form ?? "SAS"),
+    legalRegistrationNumber:
+      (r.legal_registration_number as string | null) ?? null,
+    vatIntracommunityNumber:
+      (r.vat_intracommunity_number as string | null) ?? null,
+    addressLine: (r.address_line as string | null) ?? null,
+    postalCode: (r.postal_code as string | null) ?? null,
+    city: (r.city as string | null) ?? null,
+    countryCode: String(r.country_code),
+    taxJurisdictionCode: String(
+      r.tax_jurisdiction_code ?? r.country_code
+    ),
+    taxResidenceCountryCode: String(
+      r.tax_residence_country_code ?? r.country_code
+    ),
+    operatingCountryCodes: operatingCountries,
+    countryConfigVersionId: String(r.country_config_version_id),
+    currency: String(r.currency) as CurrencyCode,
+    allowedTransactionCurrencies: allowedCurrencies,
+    taxRegimeCode: String(r.tax_regime_code),
+    vatRegimeCode: String(r.vat_regime_code ?? "FR_TVA_REEL_NORMAL"),
+    fiscalYearStartMonth: Number(r.fiscal_year_start_month),
+    fiscalYearStartDate: (r.fiscal_year_start_date as string | null) ?? null,
+    fiscalYearEndDate: (r.fiscal_year_end_date as string | null) ?? null,
+    dossierStatus: rawStatus as DossierStatus,
+    activitySector: (r.activity_sector as string | null) ?? null,
+    contactName: (r.contact_name as string | null) ?? null,
+    contactEmail: (r.contact_email as string | null) ?? null,
+    contactPhone: (r.contact_phone as string | null) ?? null,
+    internalNotes: (r.internal_notes as string | null) ?? null,
+    archivedAt: (r.archived_at as string | null) ?? null,
+    archivedByUserId: (r.archived_by_user_id as string | null) ?? null,
+    archiveReason: (r.archive_reason as string | null) ?? null,
+    isActive,
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  };
+}
+
+function resolveJournalTypeFromCode(
+  code: string
+): "PURCHASES" | "SALES" | "BANK" | "CASH" | "MISC_OPERATIONS" | "OPENING_BALANCE" {
+  const upper = code.trim().toUpperCase();
+  if (upper.startsWith("AC") || upper.startsWith("HA")) return "PURCHASES";
+  if (upper.startsWith("VE") || upper.startsWith("VT")) return "SALES";
+  if (upper.startsWith("BQ") || upper.startsWith("BA")) return "BANK";
+  if (upper.startsWith("CA")) return "CASH";
+  if (upper.startsWith("AN")) return "OPENING_BALANCE";
+  return "MISC_OPERATIONS";
+}
+
 /**
- * Création d'un dossier client avec distinction explicite :
+ * Initialisation strictement idempotente du Plan Comptable Général (PCG) et des journaux standards d'un dossier :
+ * - Utilise `ON CONFLICT DO NOTHING` pour ne jamais créer de doublons ni écraser les personnalisations existantes (libellés, statut actif, comptes personnalisés).
+ */
+export function initializeDossierAccountingReferential(params: {
+  organizationId: string;
+  dossierId: string;
+  countryConfigVersionId?: string;
+  db?: DatabaseSync;
+}): {
+  insertedAccountsCount: number;
+  totalAccountsCount: number;
+  insertedJournalsCount: number;
+  totalJournalsCount: number;
+} {
+  const db = params.db ?? getDatabase();
+  const dossierRow = db
+    .prepare(
+      "SELECT id, organization_id, country_config_version_id FROM client_dossiers WHERE id = ? AND organization_id = ?"
+    )
+    .get(params.dossierId, params.organizationId) as
+    | { id: string; organization_id: string; country_config_version_id: string }
+    | undefined;
+
+  if (!dossierRow) {
+    throw new AuthorizationError("Dossier introuvable dans cette organisation.", 404);
+  }
+
+  const versionId =
+    params.countryConfigVersionId ?? dossierRow.country_config_version_id;
+  const countryCfg = getCountryConfigurationByVersionId(versionId, db);
+  const now = new Date().toISOString();
+
+  const insertAccountStmt = db.prepare(`
+    INSERT INTO chart_of_accounts (
+      id, organization_id, dossier_id, account_number, label,
+      account_class, allow_auxiliary, is_active, source_rule_version_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(dossier_id, account_number) DO NOTHING
+  `);
+
+  const insertJournalStmt = db.prepare(`
+    INSERT INTO accounting_journals (
+      id, organization_id, dossier_id, code, label, journal_type, is_active, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    ON CONFLICT(dossier_id, code) DO NOTHING
+  `);
+
+  let insertedAccountsCount = 0;
+  for (const acc of countryCfg.chartOfAccountsSample) {
+    const res = insertAccountStmt.run(
+      crypto.randomUUID(),
+      params.organizationId,
+      params.dossierId,
+      acc.accountNumber.trim(),
+      acc.label.trim(),
+      acc.accountClass,
+      acc.allowAuxiliary ? 1 : 0,
+      versionId,
+      now
+    );
+    if (res.changes > 0) {
+      insertedAccountsCount += 1;
+    }
+  }
+
+  let insertedJournalsCount = 0;
+  for (const j of countryCfg.standardJournals) {
+    const cleanCode = j.code.trim().toUpperCase();
+    const res = insertJournalStmt.run(
+      crypto.randomUUID(),
+      params.organizationId,
+      params.dossierId,
+      cleanCode,
+      j.label.trim(),
+      resolveJournalTypeFromCode(cleanCode),
+      now
+    );
+    if (res.changes > 0) {
+      insertedJournalsCount += 1;
+    }
+  }
+
+  const totalAccountsCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM chart_of_accounts WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+  const totalJournalsCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM accounting_journals WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+
+  return {
+    insertedAccountsCount,
+    totalAccountsCount,
+    insertedJournalsCount,
+    totalJournalsCount,
+  };
+}
+
+/**
+ * Création d'un dossier client (Phase 1 Section 9) avec distinction explicite :
  * - `countryCode` (pays d'établissement)
  * - `taxJurisdictionCode` (juridiction fiscale applicable, par défaut `countryCode`)
  * - `taxResidenceCountryCode` (résidence fiscale, par défaut `countryCode`)
  * - `operatingCountryCodes` (pays d'activité)
- * - `currency` (devise de tenue comptable) et son `minorUnitExponent` (0, 2, 3, 4 décimales).
+ * - `currency` (devise de tenue comptable) et son `minorUnitExponent` (0, 2, 3, 4 décimales)
+ * - Métadonnées complètes Phase 1 : forme juridique, n° TVA intracommunautaire, adresse, régime TVA, dates d'exercice, contact, notes internes
+ * - Auto-initialisation idempotente du Plan Comptable et des journaux standards.
  */
 export function createClientDossier(params: {
   session: AuthenticatedSessionContext | null;
   organizationId: string;
   name: string;
   code: string;
+  legalForm?: string;
   legalRegistrationNumber?: string | null;
+  vatIntracommunityNumber?: string | null;
+  addressLine?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
   countryCode: string;
   taxJurisdictionCode?: string;
   taxResidenceCountryCode?: string;
@@ -564,8 +759,18 @@ export function createClientDossier(params: {
   currency?: CurrencyCode;
   allowedTransactionCurrencies?: CurrencyCode[];
   taxRegimeCode: string;
+  vatRegimeCode?: string;
   fiscalYearStartMonth?: number;
+  fiscalYearStartDate?: string | null;
+  fiscalYearEndDate?: string | null;
+  dossierStatus?: DossierStatus;
+  activitySector?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  internalNotes?: string | null;
   effectiveDate?: string;
+  platformAdminJustification?: string | null;
   db?: DatabaseSync;
 }): ClientDossier {
   const db = params.db ?? getDatabase();
@@ -573,14 +778,31 @@ export function createClientDossier(params: {
     session: params.session,
     organizationId: params.organizationId,
     allowedRoles: ["FIRM_ADMIN", "PLATFORM_ADMIN"],
+    platformAdminJustification: params.platformAdminJustification,
     actionDescription: "CREATE_CLIENT_DOSSIER",
     db,
   });
 
+  const cleanName = params.name.trim();
+  const cleanCode = params.code.trim().toUpperCase();
+  if (cleanName.length < 2 || cleanCode.length < 2) {
+    throw new Error(
+      "La raison sociale et le code dossier doivent comporter au moins 2 caractères."
+    );
+  }
+
+  const fiscalMonth = params.fiscalYearStartMonth ?? 1;
+  if (!Number.isInteger(fiscalMonth) || fiscalMonth < 1 || fiscalMonth > 12) {
+    throw new Error(
+      "Le mois d'ouverture de l'exercice comptable doit être compris entre 1 et 12."
+    );
+  }
+
   const org = getOrganizationById({
     session: params.session,
     organizationId: params.organizationId,
-    platformAdminJustification: "Vérification quota dossiers",
+    platformAdminJustification:
+      params.platformAdminJustification ?? "Vérification quota dossiers",
     db,
   });
 
@@ -622,23 +844,47 @@ export function createClientDossier(params: {
       ? params.allowedTransactionCurrencies
       : countryCfg.allowedCurrencies ?? [currency];
 
+  const initialStatus: DossierStatus =
+    params.dossierStatus &&
+    ["ACTIVE", "TO_COMPLETE", "SUSPENDED"].includes(params.dossierStatus)
+      ? params.dossierStatus
+      : "ACTIVE";
+
+  const legalForm = params.legalForm?.trim() || "SAS";
+  const vatRegimeCode =
+    params.vatRegimeCode?.trim() ||
+    (params.taxRegimeCode.includes("MICRO")
+      ? "FR_TVA_FRANCHISE_BASE"
+      : "FR_TVA_REEL_NORMAL");
+
+  const currentYear = new Date().getUTCFullYear();
+  const defaultStartDate = `${currentYear}-${String(fiscalMonth).padStart(2, "0")}-01`;
+  const defaultEndDate = `${currentYear}-12-31`;
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const cleanCode = params.code.trim().toUpperCase();
 
   db.prepare(
     `INSERT INTO client_dossiers (
-      id, organization_id, name, code, legal_registration_number,
+      id, organization_id, name, code, legal_form, legal_registration_number, vat_intracommunity_number,
+      address_line, postal_code, city,
       country_code, tax_jurisdiction_code, tax_residence_country_code, operating_countries_json,
       country_config_version_id, currency, currency_minor_unit_exponent, allowed_currencies_json,
-      tax_regime_code, fiscal_year_start_month, is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+      tax_regime_code, vat_regime_code, fiscal_year_start_month, fiscal_year_start_date, fiscal_year_end_date,
+      dossier_status, activity_sector, contact_name, contact_email, contact_phone, internal_notes,
+      is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
   ).run(
     id,
     params.organizationId,
-    params.name.trim(),
+    cleanName,
     cleanCode,
+    legalForm,
     params.legalRegistrationNumber?.trim() || null,
+    params.vatIntracommunityNumber?.trim() || null,
+    params.addressLine?.trim() || null,
+    params.postalCode?.trim() || null,
+    params.city?.trim() || null,
     establishmentCountry,
     taxJurisdiction,
     taxResidenceCountry,
@@ -648,10 +894,27 @@ export function createClientDossier(params: {
     currencyExponent,
     JSON.stringify(allowedCurrencies),
     params.taxRegimeCode,
-    params.fiscalYearStartMonth ?? 1,
+    vatRegimeCode,
+    fiscalMonth,
+    params.fiscalYearStartDate?.trim() || defaultStartDate,
+    params.fiscalYearEndDate?.trim() || defaultEndDate,
+    initialStatus,
+    params.activitySector?.trim() || null,
+    params.contactName?.trim() || null,
+    params.contactEmail?.trim() || null,
+    params.contactPhone?.trim() || null,
+    params.internalNotes?.trim() || null,
     now,
     now
   );
+
+  // Auto-initialisation idempotente du Plan Comptable et des journaux standards du dossier
+  const referentialInit = initializeDossierAccountingReferential({
+    organizationId: params.organizationId,
+    dossierId: id,
+    countryConfigVersionId: countryCfg.versionId,
+    db,
+  });
 
   recordAuditLog(
     {
@@ -663,8 +926,9 @@ export function createClientDossier(params: {
       targetEntityType: "CLIENT_DOSSIER",
       targetEntityId: id,
       metadata: {
-        name: params.name.trim(),
+        name: cleanName,
         code: cleanCode,
+        legalForm,
         establishmentCountry,
         taxJurisdiction,
         taxResidenceCountry,
@@ -672,30 +936,466 @@ export function createClientDossier(params: {
         countryConfigVersionId: countryCfg.versionId,
         currency,
         currencyExponent,
+        taxRegimeCode: params.taxRegimeCode,
+        vatRegimeCode,
+        dossierStatus: initialStatus,
+        initializedAccounts: referentialInit.insertedAccountsCount,
+        initializedJournals: referentialInit.insertedJournalsCount,
       },
     },
     db
   );
 
-  return {
-    id,
-    organizationId: params.organizationId,
-    name: params.name.trim(),
-    code: cleanCode,
-    legalRegistrationNumber: params.legalRegistrationNumber?.trim() || null,
-    countryCode: establishmentCountry,
-    taxJurisdictionCode: taxJurisdiction,
-    taxResidenceCountryCode: taxResidenceCountry,
-    operatingCountryCodes: operatingCountries,
-    countryConfigVersionId: countryCfg.versionId,
-    currency,
-    allowedTransactionCurrencies: allowedCurrencies,
-    taxRegimeCode: params.taxRegimeCode,
-    fiscalYearStartMonth: params.fiscalYearStartMonth ?? 1,
-    isActive: true,
-    createdAt: now,
-    updatedAt: now,
+  const createdRow = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ?")
+    .get(id) as Record<string, unknown>;
+  return mapClientDossierRow(createdRow);
+}
+
+/**
+ * Consultation détaillée d'un dossier client avec ses compteurs, ses journaux initialisés et ses affectations.
+ */
+export function getClientDossierDetails(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  platformAdminJustification?: string | null;
+  db?: DatabaseSync;
+}): {
+  dossier: ClientDossier;
+  chartOfAccountsCount: number;
+  journals: Array<{ id: string; code: string; label: string; journalType: string; isActive: boolean }>;
+  assignments: Array<{
+    userId: string;
+    email: string;
+    fullName: string;
+    orgRole: SystemRole;
+    canView: boolean;
+    canUpload: boolean;
+    canEditExtraction: boolean;
+    canValidateAccounting: boolean;
+    canExport: boolean;
+  }>;
+  metrics: {
+    documentsCount: number;
+    invoicesCount: number;
+    entriesCount: number;
+    openAnomaliesCount: number;
   };
+} {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VIEW",
+    platformAdminJustification: params.platformAdminJustification,
+    db,
+  });
+
+  const row = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ? AND organization_id = ?")
+    .get(params.dossierId, params.organizationId) as Record<string, unknown> | undefined;
+  if (!row) {
+    throw new AuthorizationError("Dossier introuvable dans cette organisation.", 404);
+  }
+
+  const dossier = mapClientDossierRow(row);
+  const chartOfAccountsCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM chart_of_accounts WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+
+  const journalRows = db
+    .prepare(
+      "SELECT id, code, label, journal_type, is_active FROM accounting_journals WHERE dossier_id = ? AND organization_id = ? ORDER BY code ASC"
+    )
+    .all(params.dossierId, params.organizationId) as Array<Record<string, unknown>>;
+
+  const journals = journalRows.map((j) => ({
+    id: String(j.id),
+    code: String(j.code),
+    label: String(j.label),
+    journalType: String(j.journal_type),
+    isActive: Number(j.is_active) === 1,
+  }));
+
+  const assignments = listDossierAssignments({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    platformAdminJustification: params.platformAdminJustification,
+    db,
+  });
+
+  const documentsCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM documents WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+  const invoicesCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM invoices WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+  const entriesCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM accounting_entries WHERE dossier_id = ? AND organization_id = ?")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+  const openAnomaliesCount = Number(
+    (
+      db
+        .prepare("SELECT COUNT(*) AS c FROM anomalies WHERE dossier_id = ? AND organization_id = ? AND status = 'OPEN'")
+        .get(params.dossierId, params.organizationId) as { c: number }
+    ).c
+  );
+
+  return {
+    dossier,
+    chartOfAccountsCount,
+    journals,
+    assignments,
+    metrics: {
+      documentsCount,
+      invoicesCount,
+      entriesCount,
+      openAnomaliesCount,
+    },
+  };
+}
+
+/**
+ * Mise à jour des informations d'un dossier client (Phase 1 Section 9) avec contrôle RBAC :
+ * - Autorisé pour `FIRM_ADMIN` et `PLATFORM_ADMIN` (avec justification).
+ * - Autorisé pour `CLIENT_DIRECTOR` affecté au dossier.
+ * - Autorisé pour `ACCOUNTANT_COLLABORATOR` affecté au dossier disposant de `can_validate_accounting = 1` ou `can_edit_extraction = 1`.
+ * - Interdit sur un dossier archivé logiquement tant qu'il n'est pas restauré.
+ */
+export function updateClientDossier(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  name?: string;
+  legalForm?: string;
+  legalRegistrationNumber?: string | null;
+  vatIntracommunityNumber?: string | null;
+  addressLine?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  taxRegimeCode?: string;
+  vatRegimeCode?: string;
+  fiscalYearStartMonth?: number;
+  fiscalYearStartDate?: string | null;
+  fiscalYearEndDate?: string | null;
+  dossierStatus?: Exclude<DossierStatus, "ARCHIVED">;
+  activitySector?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  internalNotes?: string | null;
+  platformAdminJustification?: string | null;
+  db?: DatabaseSync;
+}): ClientDossier {
+  const db = params.db ?? getDatabase();
+  const { effectiveRole } = assertOrganizationAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    platformAdminJustification: params.platformAdminJustification,
+    actionDescription: "UPDATE_CLIENT_DOSSIER",
+    db,
+  });
+
+  const existingRow = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ? AND organization_id = ?")
+    .get(params.dossierId, params.organizationId) as Record<string, unknown> | undefined;
+
+  if (!existingRow) {
+    throw new AuthorizationError("Dossier introuvable dans cette organisation.", 404);
+  }
+
+  // Vérification fine des permissions par rôle sur le dossier
+  if (effectiveRole !== "FIRM_ADMIN" && effectiveRole !== "PLATFORM_ADMIN") {
+    assertDossierAccess({
+      session: params.session,
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      permission: "VIEW",
+      platformAdminJustification: params.platformAdminJustification,
+      db,
+    });
+
+    if (effectiveRole === "ACCOUNTANT_COLLABORATOR") {
+      const assignment = db
+        .prepare(
+          "SELECT can_edit_extraction, can_validate_accounting FROM dossier_assignments WHERE organization_id = ? AND dossier_id = ? AND user_id = ?"
+        )
+        .get(params.organizationId, params.dossierId, params.session!.user.id) as
+        | { can_edit_extraction: number; can_validate_accounting: number }
+        | undefined;
+      if (
+        !assignment ||
+        (Number(assignment.can_edit_extraction) !== 1 &&
+          Number(assignment.can_validate_accounting) !== 1)
+      ) {
+        recordAuditLog(
+          {
+            organizationId: params.organizationId,
+            dossierId: params.dossierId,
+            actorUserId: params.session!.user.id,
+            actorRole: effectiveRole,
+            action: "DOSSIER_UPDATE_DENIED_READONLY_COLLABORATOR",
+            targetEntityType: "CLIENT_DOSSIER",
+            targetEntityId: params.dossierId,
+          },
+          db
+        );
+        throw new AuthorizationError(
+          "Accès refusé : un collaborateur en lecture seule ne peut pas modifier les paramètres du dossier.",
+          403
+        );
+      }
+    }
+  }
+
+  const currentDossier = mapClientDossierRow(existingRow);
+  if (!currentDossier.isActive || currentDossier.dossierStatus === "ARCHIVED") {
+    throw new Error(
+      "Ce dossier est archivé logiquement. Restaurez-le d'abord avant de modifier ses paramètres."
+    );
+  }
+
+  const nextName = params.name !== undefined ? params.name.trim() : currentDossier.name;
+  if (nextName.length < 2) {
+    throw new Error("La raison sociale du dossier doit comporter au moins 2 caractères.");
+  }
+
+  const nextFiscalMonth =
+    params.fiscalYearStartMonth !== undefined
+      ? Number(params.fiscalYearStartMonth)
+      : currentDossier.fiscalYearStartMonth;
+  if (!Number.isInteger(nextFiscalMonth) || nextFiscalMonth < 1 || nextFiscalMonth > 12) {
+    throw new Error(
+      "Le mois d'ouverture de l'exercice comptable doit être compris entre 1 et 12."
+    );
+  }
+
+  const nextStatus =
+    params.dossierStatus !== undefined
+      ? params.dossierStatus
+      : (currentDossier.dossierStatus ?? "ACTIVE");
+  if (!["ACTIVE", "TO_COMPLETE", "SUSPENDED"].includes(nextStatus)) {
+    throw new Error(
+      "Statut de dossier invalide pour une modification courante (utilisez l'action d'archivage dédiée pour archiver)."
+    );
+  }
+
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE client_dossiers SET
+      name = ?,
+      legal_form = ?,
+      legal_registration_number = ?,
+      vat_intracommunity_number = ?,
+      address_line = ?,
+      postal_code = ?,
+      city = ?,
+      tax_regime_code = ?,
+      vat_regime_code = ?,
+      fiscal_year_start_month = ?,
+      fiscal_year_start_date = ?,
+      fiscal_year_end_date = ?,
+      dossier_status = ?,
+      activity_sector = ?,
+      contact_name = ?,
+      contact_email = ?,
+      contact_phone = ?,
+      internal_notes = ?,
+      updated_at = ?
+     WHERE id = ? AND organization_id = ?`
+  ).run(
+    nextName,
+    params.legalForm !== undefined ? params.legalForm.trim() : (currentDossier.legalForm ?? "SAS"),
+    params.legalRegistrationNumber !== undefined
+      ? params.legalRegistrationNumber?.trim() || null
+      : currentDossier.legalRegistrationNumber,
+    params.vatIntracommunityNumber !== undefined
+      ? params.vatIntracommunityNumber?.trim() || null
+      : (currentDossier.vatIntracommunityNumber ?? null),
+    params.addressLine !== undefined
+      ? params.addressLine?.trim() || null
+      : (currentDossier.addressLine ?? null),
+    params.postalCode !== undefined
+      ? params.postalCode?.trim() || null
+      : (currentDossier.postalCode ?? null),
+    params.city !== undefined
+      ? params.city?.trim() || null
+      : (currentDossier.city ?? null),
+    params.taxRegimeCode !== undefined
+      ? params.taxRegimeCode.trim()
+      : currentDossier.taxRegimeCode,
+    params.vatRegimeCode !== undefined
+      ? params.vatRegimeCode.trim()
+      : (currentDossier.vatRegimeCode ?? "FR_TVA_REEL_NORMAL"),
+    nextFiscalMonth,
+    params.fiscalYearStartDate !== undefined
+      ? params.fiscalYearStartDate?.trim() || null
+      : (currentDossier.fiscalYearStartDate ?? null),
+    params.fiscalYearEndDate !== undefined
+      ? params.fiscalYearEndDate?.trim() || null
+      : (currentDossier.fiscalYearEndDate ?? null),
+    nextStatus,
+    params.activitySector !== undefined
+      ? params.activitySector?.trim() || null
+      : (currentDossier.activitySector ?? null),
+    params.contactName !== undefined
+      ? params.contactName?.trim() || null
+      : (currentDossier.contactName ?? null),
+    params.contactEmail !== undefined
+      ? params.contactEmail?.trim() || null
+      : (currentDossier.contactEmail ?? null),
+    params.contactPhone !== undefined
+      ? params.contactPhone?.trim() || null
+      : (currentDossier.contactPhone ?? null),
+    params.internalNotes !== undefined
+      ? params.internalNotes?.trim() || null
+      : (currentDossier.internalNotes ?? null),
+    now,
+    params.dossierId,
+    params.organizationId
+  );
+
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: params.session!.user.id,
+      actorRole: effectiveRole,
+      action: "CLIENT_DOSSIER_UPDATED",
+      targetEntityType: "CLIENT_DOSSIER",
+      targetEntityId: params.dossierId,
+      metadata: {
+        name: nextName,
+        taxRegimeCode: params.taxRegimeCode ?? currentDossier.taxRegimeCode,
+        vatRegimeCode: params.vatRegimeCode ?? currentDossier.vatRegimeCode,
+        dossierStatus: nextStatus,
+      },
+    },
+    db
+  );
+
+  const updatedRow = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ? AND organization_id = ?")
+    .get(params.dossierId, params.organizationId) as Record<string, unknown>;
+  return mapClientDossierRow(updatedRow);
+}
+
+/**
+ * Archivage logique ou restauration d'un dossier client (Garde-fou Lot 1.1) :
+ * - Strictement réservé aux rôles `FIRM_ADMIN` et `PLATFORM_ADMIN` (avec justification).
+ * - L'archivage est 100 % logique (`dossier_status = 'ARCHIVED'`, `is_active = 0`) : aucune pièce, écriture, facture ni entrée d'audit n'est supprimée.
+ * - Exige un motif explicite (`reason` >= 5 caractères).
+ */
+export function archiveOrRestoreClientDossier(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  archive: boolean;
+  reason: string;
+  platformAdminJustification?: string | null;
+  db?: DatabaseSync;
+}): ClientDossier {
+  const db = params.db ?? getDatabase();
+  const { effectiveRole } = assertOrganizationAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    allowedRoles: ["FIRM_ADMIN", "PLATFORM_ADMIN"],
+    platformAdminJustification: params.platformAdminJustification,
+    actionDescription: params.archive ? "ARCHIVE_CLIENT_DOSSIER" : "RESTORE_CLIENT_DOSSIER",
+    db,
+  });
+
+  const existingRow = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ? AND organization_id = ?")
+    .get(params.dossierId, params.organizationId) as Record<string, unknown> | undefined;
+
+  if (!existingRow) {
+    throw new AuthorizationError("Dossier introuvable dans cette organisation.", 404);
+  }
+
+  const cleanReason = (params.reason || "").trim();
+  if (cleanReason.length < 5) {
+    throw new Error(
+      "Un motif explicite (minimum 5 caractères) est obligatoire pour archiver ou restaurer un dossier client."
+    );
+  }
+
+  const now = new Date().toISOString();
+  if (params.archive) {
+    db.prepare(
+      `UPDATE client_dossiers SET
+        dossier_status = 'ARCHIVED',
+        is_active = 0,
+        archived_at = ?,
+        archived_by_user_id = ?,
+        archive_reason = ?,
+        updated_at = ?
+       WHERE id = ? AND organization_id = ?`
+    ).run(
+      now,
+      params.session!.user.id,
+      cleanReason,
+      now,
+      params.dossierId,
+      params.organizationId
+    );
+  } else {
+    db.prepare(
+      `UPDATE client_dossiers SET
+        dossier_status = 'ACTIVE',
+        is_active = 1,
+        archived_at = NULL,
+        archived_by_user_id = NULL,
+        archive_reason = ?,
+        updated_at = ?
+       WHERE id = ? AND organization_id = ?`
+    ).run(cleanReason, now, params.dossierId, params.organizationId);
+  }
+
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: params.session!.user.id,
+      actorRole: effectiveRole,
+      action: params.archive
+        ? "CLIENT_DOSSIER_ARCHIVED_LOGICALLY"
+        : "CLIENT_DOSSIER_RESTORED",
+      targetEntityType: "CLIENT_DOSSIER",
+      targetEntityId: params.dossierId,
+      justification: cleanReason,
+      metadata: {
+        archive: params.archive,
+        reason: cleanReason,
+        preservedHistoricalReferences: true,
+      },
+    },
+    db
+  );
+
+  const updatedRow = db
+    .prepare("SELECT * FROM client_dossiers WHERE id = ? AND organization_id = ?")
+    .get(params.dossierId, params.organizationId) as Record<string, unknown>;
+  return mapClientDossierRow(updatedRow);
 }
 
 export function assignUserToDossier(params: {
@@ -708,6 +1408,7 @@ export function assignUserToDossier(params: {
   canEditExtraction: boolean;
   canValidateAccounting: boolean;
   canExport: boolean;
+  platformAdminJustification?: string | null;
   db?: DatabaseSync;
 }): void {
   const db = params.db ?? getDatabase();
@@ -715,6 +1416,7 @@ export function assignUserToDossier(params: {
     session: params.session,
     organizationId: params.organizationId,
     allowedRoles: ["FIRM_ADMIN", "PLATFORM_ADMIN"],
+    platformAdminJustification: params.platformAdminJustification,
     actionDescription: "ASSIGN_USER_TO_DOSSIER",
     db,
   });
@@ -784,6 +1486,66 @@ export function assignUserToDossier(params: {
   );
 }
 
+export function listDossierAssignments(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  platformAdminJustification?: string | null;
+  db?: DatabaseSync;
+}): Array<{
+  userId: string;
+  email: string;
+  fullName: string;
+  orgRole: SystemRole;
+  canView: boolean;
+  canUpload: boolean;
+  canEditExtraction: boolean;
+  canValidateAccounting: boolean;
+  canExport: boolean;
+}> {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VIEW",
+    platformAdminJustification: params.platformAdminJustification,
+    db,
+  });
+
+  const rows = db
+    .prepare(
+      `SELECT
+        a.user_id,
+        a.can_view,
+        a.can_upload,
+        a.can_edit_extraction,
+        a.can_validate_accounting,
+        a.can_export,
+        u.email,
+        u.full_name,
+        m.role AS org_role
+       FROM dossier_assignments a
+       JOIN users u ON u.id = a.user_id
+       JOIN organization_memberships m ON m.organization_id = a.organization_id AND m.user_id = a.user_id
+       WHERE a.organization_id = ? AND a.dossier_id = ?
+       ORDER BY u.full_name ASC`
+    )
+    .all(params.organizationId, params.dossierId) as Array<Record<string, unknown>>;
+
+  return rows.map((r) => ({
+    userId: String(r.user_id),
+    email: String(r.email),
+    fullName: String(r.full_name),
+    orgRole: String(r.org_role) as SystemRole,
+    canView: Number(r.can_view) === 1,
+    canUpload: Number(r.can_upload) === 1,
+    canEditExtraction: Number(r.can_edit_extraction) === 1,
+    canValidateAccounting: Number(r.can_validate_accounting) === 1,
+    canExport: Number(r.can_export) === 1,
+  }));
+}
+
 export function listDossiersForOrganization(params: {
   session: AuthenticatedSessionContext | null;
   organizationId: string;
@@ -820,54 +1582,7 @@ export function listDossiersForOrganization(params: {
     >;
   }
 
-  return rows.map((r) => {
-    let operatingCountries: string[] = [String(r.country_code)];
-    if (
-      typeof r.operating_countries_json === "string" &&
-      r.operating_countries_json
-    ) {
-      try {
-        operatingCountries = JSON.parse(r.operating_countries_json) as string[];
-      } catch {
-        operatingCountries = [String(r.country_code)];
-      }
-    }
-    let allowedCurrencies: CurrencyCode[] = [String(r.currency)];
-    if (
-      typeof r.allowed_currencies_json === "string" &&
-      r.allowed_currencies_json
-    ) {
-      try {
-        allowedCurrencies = JSON.parse(r.allowed_currencies_json) as CurrencyCode[];
-      } catch {
-        allowedCurrencies = [String(r.currency)];
-      }
-    }
-    return {
-      id: String(r.id),
-      organizationId: String(r.organization_id),
-      name: String(r.name),
-      code: String(r.code),
-      legalRegistrationNumber:
-        (r.legal_registration_number as string | null) ?? null,
-      countryCode: String(r.country_code),
-      taxJurisdictionCode: String(
-        r.tax_jurisdiction_code ?? r.country_code
-      ),
-      taxResidenceCountryCode: String(
-        r.tax_residence_country_code ?? r.country_code
-      ),
-      operatingCountryCodes: operatingCountries,
-      countryConfigVersionId: String(r.country_config_version_id),
-      currency: String(r.currency) as CurrencyCode,
-      allowedTransactionCurrencies: allowedCurrencies,
-      taxRegimeCode: String(r.tax_regime_code),
-      fiscalYearStartMonth: Number(r.fiscal_year_start_month),
-      isActive: Number(r.is_active) === 1,
-      createdAt: String(r.created_at),
-      updatedAt: String(r.updated_at),
-    };
-  });
+  return rows.map(mapClientDossierRow);
 }
 
 export async function ingestDocumentIntoDossier(params: {

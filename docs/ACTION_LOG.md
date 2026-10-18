@@ -139,4 +139,35 @@
   - `npm run seed` $\rightarrow$ `status: "OK", organizationsCount: 2, usersCount: 4`.
   - Vérification sur `./data/app.db` $\rightarrow$ `triggers: ["trg_audit_logs_immutable_delete", "trg_audit_logs_immutable_update"]`, `updateBlocked: true`, `deleteBlocked: true`, `integrity.valid: true`.
 
+---
+
+### `ACT-0011` — Audit de référence pré-Phase 1 et établissement du Plan de Livraison Incrémental en 6 lots (`PHASE1_DELIVERY_PLAN.md`)
+- **Date et heure** : 2026-10-18 16:54 – 17:04 (+01:00)
+- **Lot concerné** : `PHASE-1-PLANNING`
+- **Objectif** : Conformément aux Sections A, B, C et G de la *Directive de Pilotage — Phase 1* et aux Sections 1 à 39 du *Prompt Phase 1*, auditer l'état réel du dépôt au commit `fb52d44`, résoudre la divergence de palette graphique et produire le plan de livraison découpé en 6 lots indépendants avant d'entamer le développement.
+- **Éléments examinés** :
+  - État Git (`main` synchronisé avec `origin/main` sur `fb52d44`), `src/services/tenant-service.ts`, `src/rules/deterministic-engine.ts`, `src/ai/ai-gateway.ts`, `src/countries/country-registry.ts`, `src/db/database.ts`, `src/db/phase1-readiness-migration.ts`, `src/ui/app-view.ts`.
+- **Livrable créé** : [`docs/PHASE1_DELIVERY_PLAN.md`](./PHASE1_DELIVERY_PLAN.md) définissant les **Lots 1.1 à 1.6** avec leurs 12 rubriques obligatoires. Aucune modification du code source (`src/`) n'a été effectuée dans l'attente de la validation du plan.
+
+---
+
+### `ACT-0012` — Livraison et vérification du Lot 1.1 (Design System §5, Layout 10 entrées §8 & Module 1 Gestion complète des dossiers clients §9)
+- **Date et heure** : 2026-10-18 17:08 – 19:02 (+01:00)
+- **Lot concerné** : `LOT-1.1-DESIGN-SYSTEM-LAYOUT-DOSSIERS`
+- **Objectif** : Implémenter le Lot 1.1 conformément au plan validé et aux garde-fous de pilotage (sauvegarde préalable vérifiée de `./data/app.db`, centralisation des tokens graphiques §5 sans couleur codée en dur, 5 états d'interface obligatoires, accessibilité clavier/focus/contrastes WCAG AA/responsive, Module 1 complet avec édition, archivage logique préservant l'historique et l'audit, affectations RBAC par dossier et initialisation strictement idempotente du PCG français et des journaux).
+- **Fichiers créés ou modifiés** :
+  - [`src/config/app-config.ts`](../src/config/app-config.ts) : Alignement des tokens `brandColors` sur la Section 5 Phase 1 (`#153D35`, `#237D68`, `#D9A441`, `#F7F8FA`, `#FFFFFF`, `#17212B`, `#64748B`, `#E2E8F0`, couleurs sémantiques) et slogan `"ComptaNova — La comptabilité, plus claire."`.
+  - [`src/ui/design-system.ts`](../src/ui/design-system.ts) *(nouveau)* : Source unique des tokens CSS (`:root`), calculateur de contraste WCAG 2.1 (`calculateWcagContrastRatio`), catalogue des 10 entrées de navigation (`PHASE1_NAVIGATION_MODULES`) et styles des 5 états obligatoires (`loading`, `empty`, `error`, `confirm`, `forbidden`).
+  - [`src/i18n/translations.ts`](../src/i18n/translations.ts) : Ajout des 10 libellés de navigation et des sélecteurs de dossier actif et de période comptable en `fr`, `en` et `ar` (`RTL`).
+  - [`src/domain/types.ts`](../src/domain/types.ts) : Ajout de `DossierStatus` (`ACTIVE | TO_COMPLETE | SUSPENDED | ARCHIVED`) et des métadonnées complètes de `ClientDossier`.
+  - [`src/db/database.ts`](../src/db/database.ts) & [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts) : Ajout de la migration non destructive **`005_phase1_lot1_1_dossier_metadata`** (SQLite) et alignement du schéma PostgreSQL 16.
+  - [`src/countries/country-registry.ts`](../src/countries/country-registry.ts) : Enrichissement du PCG français (`FR-2026.1-REV0`, 37 comptes des classes 1 à 7) et des journaux standards (`ACH`, `VEN`, `BQ`, `OD`, `AN`, `AC`, `VT`).
+  - [`src/services/tenant-service.ts`](../src/services/tenant-service.ts) & [`src/db/seed.ts`](../src/db/seed.ts) : Implémentation de `initializeDossierAccountingReferential` (idempotent via `ON CONFLICT DO NOTHING`), `getClientDossierDetails`, `updateClientDossier`, `archiveOrRestoreClientDossier` (archivage logique avec motif obligatoire et préservation intégrale des références et de l'audit) et `listDossierAssignments`.
+  - [`src/server.ts`](../src/server.ts) : Exposition sécurisée des endpoints `GET/PATCH /api/organizations/:orgId/dossiers/:dossierId`, `POST .../archive`, `GET/POST .../assignments` et `POST .../init-referential`.
+  - [`src/ui/app-view.ts`](../src/ui/app-view.ts) : Refonte de l'interface avec les 10 entrées de navigation, la barre de contexte (sélecteur de dossier actif + période comptable), les 5 états UI et le panneau complet de gestion du dossier client.
+  - [`src/tests/phase1-lot1-1.test.ts`](../src/tests/phase1-lot1-1.test.ts) *(nouveau)* & [`src/tests/phase1-readiness-and-postgres.test.ts`](../src/tests/phase1-readiness-and-postgres.test.ts) : Ajout de la suite automatisée du Lot 1.1 (4 sous-suites couvrant tokens/contrastes WCAG AA, navigation/accessibilité/5 états, idempotence PCG/journaux, cycle complet API/RBAC/isolation inter-organisations/archivage logique).
+- **Commandes exécutées et résultats observés** :
+  - Sauvegarde préalable : `cp data/app.db data/backups/app.db.pre-lot-1.1.bak && sha256sum ...` $\rightarrow$ empreinte SHA-256 `047bf2a5758b8569b2b45b05cb0c783bf5a5c1cd804d0ed156e0c0503e607f80` identique avant et après essais.
+  - Test de migration sur copie dédiée : `DATABASE_PATH=./data/backups/app.db.test-migration-005.sqlite node dist/db/migrate-cli.js` $\rightarrow$ `status: "OK", appliedVersions: ["005_phase1_lot1_1_dossier_metadata"], totalMigrations: 5` (copie temporaire nettoyée ensuite, `./data/app.db` intacte).
+  - `npm test` $\rightarrow$ **26/26 tests passants** (4 suites, 0 échec, durée `1681.93 ms`), incluant le test PostgreSQL 16.15 local.
 

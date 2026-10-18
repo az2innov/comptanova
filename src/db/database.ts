@@ -555,6 +555,30 @@ export const MIGRATIONS: MigrationDefinition[] = [
       END;
     `,
   },
+  {
+    version: "005_phase1_lot1_1_dossier_metadata",
+    description:
+      "Lot 1.1 (Module 1 — Gestion des dossiers clients) : Ajout des métadonnées complètes du dossier (forme juridique, n° TVA intracommunautaire, adresse, régime TVA, dates d'exercice, statut, contact, notes internes et archivage logique tracé).",
+    upSql: `
+      ALTER TABLE client_dossiers ADD COLUMN legal_form TEXT NOT NULL DEFAULT 'SAS';
+      ALTER TABLE client_dossiers ADD COLUMN vat_intracommunity_number TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN address_line TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN postal_code TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN city TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN vat_regime_code TEXT NOT NULL DEFAULT 'FR_TVA_REEL_NORMAL';
+      ALTER TABLE client_dossiers ADD COLUMN fiscal_year_start_date TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN fiscal_year_end_date TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN dossier_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (dossier_status IN ('ACTIVE', 'TO_COMPLETE', 'SUSPENDED', 'ARCHIVED'));
+      ALTER TABLE client_dossiers ADD COLUMN activity_sector TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN contact_name TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN contact_email TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN contact_phone TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN internal_notes TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN archived_at TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN archived_by_user_id TEXT;
+      ALTER TABLE client_dossiers ADD COLUMN archive_reason TEXT;
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync = getDatabase()): {

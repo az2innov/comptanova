@@ -73,13 +73,24 @@ export interface AppConfig {
   /** Confiance explicite envers l'en-tête X-Forwarded-For derrière un reverse proxy (SEC-OPEN-03) */
   trustProxy: boolean;
 
-  /** Charte graphique centralisée (REQ-002) */
+  /** Charte graphique centralisée — Phase 1 Section 5 (REQ-002) */
   brandColors: {
     primaryDeepEmerald: string;
     secondaryJade: string;
     accentWarmAmber: string;
     surfaceOffWhite: string;
+    surfaceCard: string;
     textGraphite: string;
+    textSecondary: string;
+    borderSubtle: string;
+    statusSuccess: string;
+    statusSuccessBg: string;
+    statusWarning: string;
+    statusWarningBg: string;
+    statusDanger: string;
+    statusDangerBg: string;
+    statusInfo: string;
+    statusInfoBg: string;
   };
 }
 
@@ -133,7 +144,7 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appName: env.APP_NAME || "ComptaNova",
     appTagline:
       env.APP_TAGLINE ||
-      "Plateforme d'assistance comptable intelligente, multi-tenant et multi-pays",
+      "ComptaNova — La comptabilité, plus claire.",
     appSupportEmail:
       env.APP_SUPPORT_EMAIL || "support@comptanova.example.com",
     appLegalEntity:
@@ -187,8 +198,19 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       primaryDeepEmerald: env.BRAND_COLOR_PRIMARY || "#153D35",
       secondaryJade: env.BRAND_COLOR_SECONDARY || "#237D68",
       accentWarmAmber: env.BRAND_COLOR_ACCENT || "#D9A441",
-      surfaceOffWhite: env.BRAND_COLOR_SURFACE || "#F7F6F2",
-      textGraphite: env.BRAND_COLOR_TEXT || "#1C2421",
+      surfaceOffWhite: env.BRAND_COLOR_SURFACE || "#F7F8FA",
+      surfaceCard: env.BRAND_COLOR_CARD || "#FFFFFF",
+      textGraphite: env.BRAND_COLOR_TEXT || "#17212B",
+      textSecondary: env.BRAND_COLOR_TEXT_SECONDARY || "#64748B",
+      borderSubtle: env.BRAND_COLOR_BORDER || "#E2E8F0",
+      statusSuccess: env.BRAND_COLOR_SUCCESS || "#16794B",
+      statusSuccessBg: env.BRAND_COLOR_SUCCESS_BG || "#ECFDF3",
+      statusWarning: env.BRAND_COLOR_WARNING || "#B45309",
+      statusWarningBg: env.BRAND_COLOR_WARNING_BG || "#FFFBEB",
+      statusDanger: env.BRAND_COLOR_DANGER || "#B42318",
+      statusDangerBg: env.BRAND_COLOR_DANGER_BG || "#FEF3F2",
+      statusInfo: env.BRAND_COLOR_INFO || "#1D4ED8",
+      statusInfoBg: env.BRAND_COLOR_INFO_BG || "#EFF6FF",
     },
   };
 }

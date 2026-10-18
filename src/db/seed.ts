@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { getDatabase, runMigrations } from "./database.js";
-import { syncCountryConfigurationsToDatabase } from "../services/tenant-service.js";
+import {
+  syncCountryConfigurationsToDatabase,
+  initializeDossierAccountingReferential,
+} from "../services/tenant-service.js";
 import { hashPassword } from "../auth/auth-service.js";
 import { recordAuditLog } from "../audit/audit-service.js";
 
@@ -146,11 +149,14 @@ export function seedDemoData(db: DatabaseSync = getDatabase()): {
 
     const insertDossier = db.prepare(`
       INSERT INTO client_dossiers (
-        id, organization_id, name, code, legal_registration_number,
+        id, organization_id, name, code, legal_form, legal_registration_number, vat_intracommunity_number,
+        address_line, postal_code, city,
         country_code, tax_jurisdiction_code, tax_residence_country_code, operating_countries_json,
         country_config_version_id, currency, currency_minor_unit_exponent, allowed_currencies_json,
-        tax_regime_code, fiscal_year_start_month, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'FR', 'FR', 'FR', '["FR"]', 'FR-2026.1-REV0', 'EUR', 2, '["EUR","USD"]', ?, 1, 1, ?, ?)
+        tax_regime_code, vat_regime_code, fiscal_year_start_month, fiscal_year_start_date, fiscal_year_end_date,
+        dossier_status, activity_sector, contact_name, contact_email,
+        is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FR', 'FR', 'FR', '["FR"]', 'FR-2026.1-REV0', 'EUR', 2, '["EUR","USD"]', ?, ?, 1, '2026-01-01', '2026-12-31', 'ACTIVE', ?, ?, ?, 1, ?, ?)
     `);
 
     insertDossier.run(
@@ -158,8 +164,17 @@ export function seedDemoData(db: DatabaseSync = getDatabase()): {
       org1Id,
       "Boulangerie Artisanale Dupuis SARL (Démo)",
       "DOS-DUPUIS-01",
+      "SARL",
       "81234567800019",
+      "FR45812345678",
+      "14 Rue des Martyrs",
+      "75009",
+      "Paris",
       "FR_REEL_NORMAL_IS",
+      "FR_TVA_REEL_NORMAL",
+      "Boulangerie-Pâtisserie artisanale",
+      "Jean Dupuis",
+      "j.dupuis@boulangerie-dupuis-demo.local",
       now,
       now
     );
@@ -168,8 +183,17 @@ export function seedDemoData(db: DatabaseSync = getDatabase()): {
       org1Id,
       "Marc Veyrat Conseil — Micro-Entreprise (Démo)",
       "DOS-VEYRAT-02",
+      "EI_MICRO",
       "90123456700011",
+      null,
+      "8 Cours Lafayette",
+      "69003",
+      "Lyon",
       "FR_MICRO_ENTREPRISE",
+      "FR_TVA_FRANCHISE_BASE",
+      "Conseil en systèmes et logiciels informatiques",
+      "Marc Veyrat",
+      "contact@veyrat-conseil-demo.local",
       now,
       now
     );
@@ -178,11 +202,39 @@ export function seedDemoData(db: DatabaseSync = getDatabase()): {
       org2Id,
       "Atelier Lumière — Dossier Principal (Démo)",
       "DOS-LUMIERE-01",
+      "SAS",
       "52345678900024",
+      "FR92523456789",
+      "22 Quai des Chartrons",
+      "33000",
+      "Bordeaux",
       "FR_REEL_NORMAL_IS",
+      "FR_TVA_REEL_NORMAL",
+      "Design industriel et luminaires",
+      "Sophie Martin",
+      "direction@atelier-lumiere-demo.local",
       now,
       now
     );
+
+    initializeDossierAccountingReferential({
+      organizationId: org1Id,
+      dossierId: dossier1Id,
+      countryConfigVersionId: "FR-2026.1-REV0",
+      db,
+    });
+    initializeDossierAccountingReferential({
+      organizationId: org1Id,
+      dossierId: dossier2Id,
+      countryConfigVersionId: "FR-2026.1-REV0",
+      db,
+    });
+    initializeDossierAccountingReferential({
+      organizationId: org2Id,
+      dossierId: dossier3Id,
+      countryConfigVersionId: "FR-2026.1-REV0",
+      db,
+    });
 
     // Affecter uniquement le dossier 1 au collaborateur Thomas Bernard (le dossier 2 ne lui est pas affecté pour démontrer le contrôle granulaire par dossier)
     db.prepare(`

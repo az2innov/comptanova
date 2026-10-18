@@ -9,6 +9,7 @@ import {
   resolveSessionByToken,
   revokeSession,
   assertOrganizationAccess,
+  assertDossierAccess,
   AuthorizationError,
 } from "./auth/auth-service.js";
 import {
@@ -19,6 +20,12 @@ import {
   addMemberToOrganization,
   listDossiersForOrganization,
   createClientDossier,
+  getClientDossierDetails,
+  updateClientDossier,
+  archiveOrRestoreClientDossier,
+  assignUserToDossier,
+  listDossierAssignments,
+  initializeDossierAccountingReferential,
   listCountryConfigurations,
   getCountryConfigurationByCode,
   getCountryConfigurationByVersionId,
@@ -29,7 +36,7 @@ import {
 } from "./audit/audit-service.js";
 import { runDeterministicSimulation } from "./rules/deterministic-engine.js";
 import { renderAppHtml } from "./ui/app-view.js";
-import { OrganizationType, SystemRole } from "./domain/types.js";
+import { DossierStatus, OrganizationType, SystemRole } from "./domain/types.js";
 import { CurrencyCode } from "./domain/money.js";
 
 /**
@@ -392,9 +399,16 @@ export function createAppServer(
             organizationId: orgId,
             name: String(body.name || ""),
             code: String(body.code || ""),
+            legalForm: body.legalForm ? String(body.legalForm) : undefined,
             legalRegistrationNumber: body.legalRegistrationNumber
               ? String(body.legalRegistrationNumber)
               : null,
+            vatIntracommunityNumber: body.vatIntracommunityNumber
+              ? String(body.vatIntracommunityNumber)
+              : null,
+            addressLine: body.addressLine ? String(body.addressLine) : null,
+            postalCode: body.postalCode ? String(body.postalCode) : null,
+            city: body.city ? String(body.city) : null,
             countryCode: establishCountry,
             taxJurisdictionCode: taxJurisdiction,
             taxResidenceCountryCode: body.taxResidenceCountryCode
@@ -409,13 +423,235 @@ export function createAppServer(
             taxRegimeCode: body.taxRegimeCode
               ? String(body.taxRegimeCode)
               : defaultRegime,
+            vatRegimeCode: body.vatRegimeCode
+              ? String(body.vatRegimeCode)
+              : undefined,
+            fiscalYearStartMonth:
+              body.fiscalYearStartMonth !== undefined
+                ? Number(body.fiscalYearStartMonth)
+                : undefined,
+            fiscalYearStartDate: body.fiscalYearStartDate
+              ? String(body.fiscalYearStartDate)
+              : null,
+            fiscalYearEndDate: body.fiscalYearEndDate
+              ? String(body.fiscalYearEndDate)
+              : null,
+            dossierStatus: body.dossierStatus
+              ? (String(body.dossierStatus) as DossierStatus)
+              : undefined,
+            activitySector: body.activitySector
+              ? String(body.activitySector)
+              : null,
+            contactName: body.contactName ? String(body.contactName) : null,
+            contactEmail: body.contactEmail ? String(body.contactEmail) : null,
+            contactPhone: body.contactPhone ? String(body.contactPhone) : null,
+            internalNotes: body.internalNotes
+              ? String(body.internalNotes)
+              : null,
             effectiveDate: body.effectiveDate
               ? String(body.effectiveDate)
               : undefined,
+            platformAdminJustification,
             db,
           });
           sendJson(res, 201, { dossier });
           return;
+        }
+
+        // Routes scopées par dossier : /api/organizations/:orgId/dossiers/:dossierId(/...)
+        const dossierSubMatch = subRoute.match(/^dossiers\/([^/]+)(?:\/(.+))?$/);
+        if (dossierSubMatch) {
+          const dossierId = decodeURIComponent(dossierSubMatch[1]!);
+          const dossierAction = dossierSubMatch[2] || "";
+
+          if (method === "GET" && dossierAction === "") {
+            const details = getClientDossierDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, details);
+            return;
+          }
+
+          if (method === "PATCH" && dossierAction === "") {
+            const body = await readJsonBody(req);
+            const dossier = updateClientDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              name: body.name !== undefined ? String(body.name) : undefined,
+              legalForm:
+                body.legalForm !== undefined ? String(body.legalForm) : undefined,
+              legalRegistrationNumber:
+                body.legalRegistrationNumber !== undefined
+                  ? body.legalRegistrationNumber
+                    ? String(body.legalRegistrationNumber)
+                    : null
+                  : undefined,
+              vatIntracommunityNumber:
+                body.vatIntracommunityNumber !== undefined
+                  ? body.vatIntracommunityNumber
+                    ? String(body.vatIntracommunityNumber)
+                    : null
+                  : undefined,
+              addressLine:
+                body.addressLine !== undefined
+                  ? body.addressLine
+                    ? String(body.addressLine)
+                    : null
+                  : undefined,
+              postalCode:
+                body.postalCode !== undefined
+                  ? body.postalCode
+                    ? String(body.postalCode)
+                    : null
+                  : undefined,
+              city:
+                body.city !== undefined
+                  ? body.city
+                    ? String(body.city)
+                    : null
+                  : undefined,
+              taxRegimeCode:
+                body.taxRegimeCode !== undefined
+                  ? String(body.taxRegimeCode)
+                  : undefined,
+              vatRegimeCode:
+                body.vatRegimeCode !== undefined
+                  ? String(body.vatRegimeCode)
+                  : undefined,
+              fiscalYearStartMonth:
+                body.fiscalYearStartMonth !== undefined
+                  ? Number(body.fiscalYearStartMonth)
+                  : undefined,
+              fiscalYearStartDate:
+                body.fiscalYearStartDate !== undefined
+                  ? body.fiscalYearStartDate
+                    ? String(body.fiscalYearStartDate)
+                    : null
+                  : undefined,
+              fiscalYearEndDate:
+                body.fiscalYearEndDate !== undefined
+                  ? body.fiscalYearEndDate
+                    ? String(body.fiscalYearEndDate)
+                    : null
+                  : undefined,
+              dossierStatus:
+                body.dossierStatus !== undefined
+                  ? (String(body.dossierStatus) as Exclude<DossierStatus, "ARCHIVED">)
+                  : undefined,
+              activitySector:
+                body.activitySector !== undefined
+                  ? body.activitySector
+                    ? String(body.activitySector)
+                    : null
+                  : undefined,
+              contactName:
+                body.contactName !== undefined
+                  ? body.contactName
+                    ? String(body.contactName)
+                    : null
+                  : undefined,
+              contactEmail:
+                body.contactEmail !== undefined
+                  ? body.contactEmail
+                    ? String(body.contactEmail)
+                    : null
+                  : undefined,
+              contactPhone:
+                body.contactPhone !== undefined
+                  ? body.contactPhone
+                    ? String(body.contactPhone)
+                    : null
+                  : undefined,
+              internalNotes:
+                body.internalNotes !== undefined
+                  ? body.internalNotes
+                    ? String(body.internalNotes)
+                    : null
+                  : undefined,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { dossier });
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "archive") {
+            const body = await readJsonBody(req);
+            const archive = body.archive !== undefined ? Boolean(body.archive) : true;
+            const reason = String(body.reason || "");
+            const dossier = archiveOrRestoreClientDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              archive,
+              reason,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { dossier });
+            return;
+          }
+
+          if (method === "GET" && dossierAction === "assignments") {
+            const assignments = listDossierAssignments({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { assignments });
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "assignments") {
+            const body = await readJsonBody(req);
+            assignUserToDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              targetUserId: String(body.targetUserId || ""),
+              canView: body.canView !== undefined ? Boolean(body.canView) : true,
+              canUpload: Boolean(body.canUpload),
+              canEditExtraction: Boolean(body.canEditExtraction),
+              canValidateAccounting: Boolean(body.canValidateAccounting),
+              canExport: Boolean(body.canExport),
+              platformAdminJustification,
+              db,
+            });
+            const assignments = listDossierAssignments({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { assignments });
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "init-referential") {
+            assertDossierAccess({
+              session,
+              organizationId: orgId,
+              dossierId,
+              permission: "VALIDATE_ACCOUNTING",
+              platformAdminJustification,
+              db,
+            });
+            const result = initializeDossierAccountingReferential({
+              organizationId: orgId,
+              dossierId,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
         }
 
         if (method === "GET" && subRoute === "audit-logs") {
