@@ -300,7 +300,7 @@
 
 ---
 
-## ACT-0016 — 2026-10-18T22:10:00+01:00 — Implémentation du Lot 1.5 : Module 5 — Saisie Comptable et Journaux (Partie Double, PCG Français, 5 Journaux VE/AC/BQ/OD/AN, Validation Humaine Inaltérable et Extourne Contrôlée)
+## ACT-0016 — 2026-10-18T22:10:00+01:00 — Implémentation du Lot 1.5 : Module 5 — Saisie Comptable et Journaux (Commit `0b67ae4`)
 - **Objectif** : Implémenter intégralement le Module 5 (Saisie comptable et journaux) de la Phase 1 conformément au cahier des charges (§16), aux directives de pilotage, et aux conditions d'autorisation de l'utilisateur (partie double stricte, équilibre Débit/Crédit en centimes, Plan Comptable Général ANC, 5 journaux officiels français VE, AC, BQ, OD, AN, validation humaine explicite avec contrôle RBAC VALIDATE_ACCOUNTING, inaltérabilité des écritures validées, extourne comptable symétrique avec liaison bidirectionnelle, tests automatisés SQLite et PostgreSQL 16).
 - **Périmètre & Fichiers modifiés** :
   1. `src/countries/country-registry.ts` :

@@ -253,7 +253,7 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
    - **Validation humaine formelle** : Contrôle RBAC strict côté serveur (`VALIDATE_ACCOUNTING` / `can_validate_accounting`), enregistrement du valideur (`validated_by_user_id`) et de l'horodatage (`validated_at`).
    - **Inaltérabilité & Extourne contrôlée** : Blocage absolu des modifications et suppressions sur écritures validées ; annulation exclusive par extourne comptable symétrique créant une contre-écriture liée (`reversal_of_entry_id`) avec statut `REVERSED` sur l'écriture d'origine.
    - **Interface utilisateur** : Livre-journal avec filtres multi-critères, synthèse financière et contrôle de balance, formulaire de saisie au kilomètre dynamique avec équilibre en temps réel, zéro couleur hexadécimale codée en dur.
-3. **Statut** : **`TERMINÉ ET TESTÉ`** (Suite `src/tests/phase1-lot1-5.test.ts` à 11 sous-tests, 100% de réussite sur SQLite et PostgreSQL 16).
+3. **Statut** : **`TERMINÉ ET TESTÉ`** (Commit `0b67ae4` — Suite `src/tests/phase1-lot1-5.test.ts` à 11 sous-tests, 100% de réussite sur SQLite et PostgreSQL 16).
 
 ---
 
