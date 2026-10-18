@@ -416,5 +416,58 @@
 - **Arrêt et point d'étape** :
   - Fin d'exécution du Lot 1.6. Arrêt strict sans enchaînement sur le Lot 1.7 et sans push distant, dans l'attente des instructions de l'utilisateur.
 
+---
+
+## ACT-0018 — 2026-10-18T23:25:00+01:00 — Implémentation du Lot 1.7 : Modules 7, 8 & 9 — Simulations Indicatives Versionnées, Exports Sécurisés (CSV/FEC) et Parcours E2E en 17 Étapes
+- **Objectif** : Implémenter intégralement le Module 7 (Simulations indicatives versionnées §19), le Module 9 (Exports sécurisés CSV anti-injection & FEC préliminaire 18 colonnes §21) et valider le grand parcours d'intégration de bout en bout en 17 étapes (§36), conformément aux instructions et aux conditions de l'autorisation conditionnelle.
+- **Périmètre & Fichiers modifiés** :
+  1. `src/services/simulation-service.ts` *(NOUVEAU)* : Service métier de simulation financière et fiscale comprenant :
+     - Implémentation complète des 4 types de simulations (§19) :
+       - `VAT_SUMMARY` : calcul exact de la TVA collectée, déductible et nette due ou crédit de TVA, à partir des paramètres saisis ou des factures/écritures réelles du dossier.
+       - `SOCIAL_CONTRIBUTIONS` : estimation indicative des cotisations des indépendants / dirigeants sur base de barèmes déterministes.
+       - `INCOME_OR_CORPORATE_TAX` : calcul indicatif de l'impôt sur les sociétés (tranche PME 15% jusqu'à 42 500 € puis 25%) ou de l'impôt sur le revenu selon les paramètres.
+       - `EXPENSE_IMPACT` : calcul de l'impact financier prévisionnel d'un investissement ou d'une dépense HT/TTC (TVA récupérable, économie d'IS indicative à 25%, impact net en trésorerie).
+     - Arithmétique monétaire exacte en centimes (`Math.round` / entiers stricts).
+     - Reproductibilité absolue : deux simulations avec des paramètres et une version de règles identiques produisent des résultats rigoureusement identiques au centime près.
+     - Blocage sécuritaire sur règles non vérifiées (`isVerified: false` ou `DRAFT_INCOMPLETE`) avec code d'erreur `BLOCKED_MISSING_OR_UNVERIFIED_RULES` et énumération des paramètres bloquants.
+     - Persistance immuable dans `simulations_history` (sans écrasement des simulations précédentes) conservant l'ensemble des paramètres d'entrée, résultats, hypothèses et limites.
+     - Mention légale obligatoire apposée sur chaque résultat : *« Estimation à titre informatif uniquement. Ne constitue pas un conseil fiscal ou comptable. Seul votre expert-comptable est habilité à valider vos choix fiscaux. »*
+     - Traçabilité complète dans `audit_logs` (`SIMULATION_CREATED`).
+  2. `src/services/export-service.ts` *(NOUVEAU)* : Service d'exports sécurisés comprenant :
+     - Fonction de neutralisation CSV Injection (DDE) `sanitizeCsvCell` : neutralisation par préfixe apostrophe `'` de tout caractère dangereux débutant une cellule (`=`, `+`, `-`, `@`, `\t`, `\r`), avec préservation des nombres négatifs arithmétiques légitimes (`-120.50`, `-45`). Échappement conforme à la RFC 4180 (guillemets doubles pour séparateurs, virgules, retours à la ligne).
+     - 5 flux d'exports CSV encodés en UTF-8 avec BOM optionnel :
+       - `invoices` : listing exhaustif des factures et avoirs (numéro, date, tiers, montants HT/TVA/TTC, statut, solde dû).
+       - `bank` : journal des opérations bancaires avec statut de rapprochement et références associées.
+       - `entries` : livre-journal des écritures comptables avec détail des lignes, comptes PCG et équilibre Débit/Crédit.
+       - `anomalies` : registre des contrôles et anomalies détectées, gravité, statut et justification de résolution.
+       - `audit` : journal d'audit immuable des actions utilisateurs (connexions, validations, exports).
+     - Générateur FEC conforme aux 18 colonnes normalisées de l'article A.47 A-1 du Livre des Procédures Fiscales (`exportFecTxt`) : séparateur tabulation `\t`, dates `YYYYMMDD`, décimales virgule `,`, sélection stricte des écritures `VALIDATED`, contrôle bloquant d'équilibre Débit/Crédit global.
+     - Qualification juridique explicite de l'export comme *« Export FEC préliminaire (génération technique) »* avec avertissement sur la clôture et la validation par l'expert-comptable.
+     - Contrôle des permissions RBAC `EXPORT` (`assertDossierAccess(..., "EXPORT")`) et étanchéité multi-tenant absolue.
+     - Traçabilité complète dans `audit_logs` (`DATA_EXPORTED`).
+  3. `src/server.ts` :
+     - Exposition des 5 endpoints REST sécurisés :
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/simulations`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/simulations`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/simulations/:simulationId`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/exports/fec`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/exports/:exportType`
+     - Prise en charge transparente des corps de requête imbriqués (`body.parameters || body`).
+  4. `src/ui/app-view.ts` :
+     - Implémentation complète de l'interface `#tab-simulator` : sélecteur des 4 simulations, formulaires dynamiques, cartes d'hypothèses et d'avertissements légaux, affichage des résultats avec ventilation HT/TVA/TTC et badge d'avertissement fiscal, tableau historique des simulations archivées.
+     - Implémentation du Centre d'Exports Sécurisés dans `#tab-settings` : boutons de téléchargement direct pour les 5 exports CSV avec protection anti-injection, et bouton d'export FEC préliminaire 18 colonnes avec rappel des conditions LPF.
+     - Respect absolu de la charte graphique et du Design System ComptaNova : zéro couleur hexadécimale codée en dur hors `:root`.
+  5. `src/tests/phase1-lot1-7.test.ts` *(NOUVEAU)* :
+     - Suite automatisée de 17 sous-tests exhaustifs : calcul exact des 4 simulations, blocage sur barèmes non vérifiés, reproductibilité stricte, neutralisation CSV Injection et conformité RFC 4180, génération des 5 flux CSV, structure et équilibre des 18 colonnes FEC, exclusion des brouillons, contrôles RBAC `EXPORT` (403), isolation multi-tenant, et persistance réelle sur PostgreSQL 16.
+     - **Grand Parcours E2E en 17 étapes (§36)** : validation intégrale de bout en bout (création dossier, dépôt devis, conversion facture, encaissement partiel, saisie journal, extourne, import CSV/OFX bancaire, rapprochement partiel, scan anomalies, simulation TVA, simulation bloquée, export CSV sécurisé, export FEC 18 colonnes, audit trail et rechargement serveur).
+- **Sauvegarde & Intégrité** :
+  - Sauvegarde de la base de référence avant travaux : `data/backups/app.db.pre-lot-1.7.bak` (SHA-256 : `5afd56ade50e67ed95effc4872233636bc3754332e044554f29f0b22fc5a6bff`).
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **97/97 tests passants** (10 suites de tests, 0 échec, durée `2768.23 ms`). `npm run typecheck` à 0 erreur.
+- **Arrêt et point d'étape** :
+  - Fin d'exécution du Lot 1.7. Arrêt strict sans push distant sur `origin/main`, dans l'attente des instructions de l'utilisateur.
+
+
 
 

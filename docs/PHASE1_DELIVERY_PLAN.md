@@ -366,5 +366,6 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
 | **Lot 1.3** | **Module 4 (Facturation des ventes, Devis, Transformation, Règlements, Factur-X préliminaire §12)** | `phase1-lot1-3.test.ts` (12 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`cc4dcb3`) |
 | **Lot 1.4** | **Module 2 (Tableaux de bord et indicateurs de pilotage, Données 100% persistées, Filtres période & Liens §20)** | `phase1-lot1-4.test.ts` (11 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`f65fae8`) |
 | **Lot 1.5** | **Module 5 (Saisie comptable multi-lignes en partie double, PCG/Journaux, Modèles, Validation & Extourne §16)** | `phase1-lot1-5.test.ts` (12 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`0b67ae4` / `9aa0581`) |
-| **Lot 1.6** | **Module 6 (Import CSV/OFX & Rapprochement bancaire §17)** + **Module 7 (10 Règles de Contrôles & Anomalies §18)** | `phase1-lot1-6.test.ts` (11 sous-tests) | **TERMINÉ ET TESTÉ** (Commit Lot 1.6) |
-| **Lot 1.7** | **Module 8 (Simulations indicatives §19)** + **Module 9 (Exports CSV/FEC §21)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot1-7.test.ts` | Planifié après Lot 1.6 (en attente d'accord) |
+| **Lot 1.6** | **Module 6 (Import CSV/OFX & Rapprochement bancaire §17)** + **Module 7 (10 Règles de Contrôles & Anomalies §18)** | `phase1-lot1-6.test.ts` (11 sous-tests) | **TERMINÉ ET TESTÉ** (`c9dba24`) |
+| **Lot 1.7** | **Module 8 (Simulations indicatives §19)** + **Module 9 (Exports CSV/FEC §21)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot1-7.test.ts` (17 sous-tests) | **TERMINÉ ET TESTÉ** (Lot 1.7) |
+

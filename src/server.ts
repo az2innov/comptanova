@@ -81,6 +81,8 @@ import {
   listDossierAnomalies,
   resolveDossierAnomaly,
 } from "./services/anomaly-service.js";
+import { SimulationService } from "./services/simulation-service.js";
+import { ExportService } from "./services/export-service.js";
 import {
   listAuditLogsForOrganization,
   verifyAuditChainIntegrity,
@@ -234,6 +236,8 @@ export function createAppServer(
   const maxLoginRequestsPerMinute = options.maxLoginRequestsPerMinute ?? 10;
   const rateLimitWindowMs = options.rateLimitWindowMs ?? 60_000;
   const trustProxy = options.trustProxy ?? appConfig.trustProxy;
+  const simulationService = new SimulationService(db);
+  const exportService = new ExportService(db);
 
   return http.createServer(async (req, res) => {
     const ip = resolveClientIp(req, trustProxy);
@@ -1538,6 +1542,108 @@ export function createAppServer(
               db,
             });
             sendJson(res, 200, { anomaly: result });
+            return;
+          }
+
+          // =================================================================
+          // MODULE 7 : SIMULATIONS INDICATIVES VERSIONNÉES (§19)
+          // =================================================================
+          // 9. Création d'une simulation : POST /api/organizations/:orgId/dossiers/:dossierId/simulations
+          if (method === "POST" && dossierAction === "simulations") {
+            const body = await readJsonBody(req);
+            const p = (body.parameters && typeof body.parameters === "object") ? { ...body, ...body.parameters } : body;
+            const simulation = simulationService.createSimulation(session, orgId, dossierId, {
+              simulationType: p.simulationType as any,
+              effectiveDate: p.effectiveDate ? String(p.effectiveDate) : undefined,
+              ruleVersionId: p.ruleVersionId ? String(p.ruleVersionId) : undefined,
+              revenueNetMinor: p.revenueNetMinor !== undefined ? Number(p.revenueNetMinor) : (p.collectedVatMinor !== undefined ? Number(p.collectedVatMinor) * 5 : undefined),
+              expensesNetMinor: p.expensesNetMinor !== undefined ? Number(p.expensesNetMinor) : (p.deductibleVatMinor !== undefined ? Number(p.deductibleVatMinor) * 5 : undefined),
+              vatRateBps: p.vatRateBps !== undefined ? Number(p.vatRateBps) : undefined,
+              useActualDossierInvoices: p.useActualDossierInvoices !== undefined ? Boolean(p.useActualDossierInvoices) : undefined,
+              taxRegimeCode: p.taxRegimeCode ? String(p.taxRegimeCode) : undefined,
+              basisRevenueMinor: p.basisRevenueMinor !== undefined ? Number(p.basisRevenueMinor) : (p.annualNetRevenueMinor !== undefined ? Number(p.annualNetRevenueMinor) : undefined),
+              basisProfitMinor: p.basisProfitMinor !== undefined ? Number(p.basisProfitMinor) : undefined,
+              customContributionRateBps: p.customContributionRateBps !== undefined ? Number(p.customContributionRateBps) : undefined,
+              taxableProfitMinor: p.taxableProfitMinor !== undefined ? Number(p.taxableProfitMinor) : undefined,
+              taxRegimeType: (p.taxRegimeType as any) || (p.isEligiblePmeReducedRate ? "IS_PME" : (p.isEligiblePmeReducedRate === false ? "IS_NORMAL" : undefined)),
+              customTaxRateBps: p.customTaxRateBps !== undefined ? Number(p.customTaxRateBps) : undefined,
+              expenseNetMinor: p.expenseNetMinor !== undefined ? Number(p.expenseNetMinor) : undefined,
+              expenseVatRateBps: p.expenseVatRateBps !== undefined ? Number(p.expenseVatRateBps) : undefined,
+              isDeductibleVat: p.isDeductibleVat !== undefined ? Boolean(p.isDeductibleVat) : undefined,
+              corporateTaxRateBps: p.corporateTaxRateBps !== undefined ? Number(p.corporateTaxRateBps) : undefined,
+            });
+            sendJson(res, 201, { simulation });
+            return;
+          }
+
+          // 10. Liste des simulations du dossier : GET /api/organizations/:orgId/dossiers/:dossierId/simulations
+          if (method === "GET" && dossierAction === "simulations") {
+            const simulations = simulationService.listSimulations(session, orgId, dossierId);
+            sendJson(res, 200, { simulations });
+            return;
+          }
+
+          // 11. Détail d'une simulation : GET /api/organizations/:orgId/dossiers/:dossierId/simulations/:simId
+          const simulationDetailMatch = dossierAction.match(/^simulations\/([^/]+)$/);
+          if (method === "GET" && simulationDetailMatch) {
+            const simId = decodeURIComponent(simulationDetailMatch[1]!);
+            const simulation = simulationService.getSimulationDetails(session, orgId, dossierId, simId);
+            sendJson(res, 200, { simulation });
+            return;
+          }
+
+          // =================================================================
+          // MODULE 9 : EXPORTS SÉCURISÉS (CSV & FEC) (§21)
+          // =================================================================
+          // 12. Export CSV sécurisé : GET /api/organizations/:orgId/dossiers/:dossierId/exports/csv/:exportType
+          const exportCsvMatch = dossierAction.match(/^exports\/csv\/([^/]+)$/);
+          if (method === "GET" && exportCsvMatch) {
+            const exportType = decodeURIComponent(exportCsvMatch[1]!);
+            const delimiter = parsedUrl.searchParams.get("delimiter") === ";" ? ";" : ",";
+            let exportResult;
+            if (exportType === "invoices") {
+              exportResult = exportService.exportInvoicesCsv(session, orgId, dossierId, { delimiter });
+            } else if (exportType === "bank") {
+              exportResult = exportService.exportBankTransactionsCsv(session, orgId, dossierId, { delimiter });
+            } else if (exportType === "entries") {
+              exportResult = exportService.exportAccountingEntriesCsv(session, orgId, dossierId, { delimiter });
+            } else if (exportType === "anomalies") {
+              exportResult = exportService.exportAnomaliesCsv(session, orgId, dossierId, { delimiter });
+            } else if (exportType === "audit") {
+              exportResult = exportService.exportAuditLogsCsv(session, orgId, dossierId, { delimiter });
+            } else {
+              throw new Error(`Type d'export CSV non supporté : ${exportType}`);
+            }
+
+            res.writeHead(200, {
+              "Content-Type": exportResult.mimeType,
+              "Content-Disposition": `attachment; filename="${exportResult.filename}"`,
+              "X-Row-Count": String(exportResult.rowCount),
+            });
+            res.end(exportResult.content);
+            return;
+          }
+
+          // 13. Export FEC préliminaire : GET /api/organizations/:orgId/dossiers/:dossierId/exports/fec
+          if (method === "GET" && dossierAction === "exports/fec") {
+            const startDate = parsedUrl.searchParams.get("startDate") || undefined;
+            const endDate = parsedUrl.searchParams.get("endDate") || undefined;
+            const decimalSeparator = parsedUrl.searchParams.get("decimalSeparator") === "." ? "." : ",";
+
+            const exportResult = exportService.exportFecTxt(session, orgId, dossierId, {
+              startDate,
+              endDate,
+              decimalSeparator,
+            });
+
+            res.writeHead(200, {
+              "Content-Type": exportResult.mimeType,
+              "Content-Disposition": `attachment; filename="${exportResult.filename}"`,
+              "X-FEC-Preliminary": "true",
+              "X-FEC-Disclaimer": encodeURIComponent(exportResult.disclaimer || ""),
+              "X-Row-Count": String(exportResult.rowCount),
+            });
+            res.end(exportResult.content);
             return;
           }
         }

@@ -1475,13 +1475,92 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 8 : SIMULATEUR MICRO-ENTREPRENEUR (Lot 1.6) -->
+      <!-- ONGLET 8 : SIMULATIONS INDICATIVES VERSIONNÉES (Lot 1.7) -->
       <section id="tab-simulator" class="tab-panel hidden">
+        <div class="cn-state-box cn-state-confirm" style="margin-bottom:1rem;">
+          <strong>Simulations Indicatives Versionnées (§19) :</strong> Estimations calculées à partir de règles déterministes versionnées par juridiction et de paramètres du dossier. Avertissement obligatoire : ces estimations sont purement informatives et ne constituent pas un conseil fiscal ou comptable officiel.
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+          <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">1. Solde de TVA</h4>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Calcul de la TVA collectée, déductible et du solde net à payer ou crédit de TVA.</p>
+            </div>
+            <button type="button" class="btn-primary btn-select-sim-type" data-type="VAT_SUMMARY">Configurer TVA</button>
+          </div>
+
+          <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">2. Cotisations Sociales</h4>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Estimation des cotisations indépendant selon le régime fiscal et barème vérifié.</p>
+            </div>
+            <button type="button" class="btn-primary btn-select-sim-type" data-type="SOCIAL_CONTRIBUTIONS">Configurer Cotisations</button>
+          </div>
+
+          <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">3. Impôt sur les Sociétés (IS)</h4>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Estimation selon barème PME (15 % jusqu'à 42 500 €, 25 % au-delà) ou taux normal.</p>
+            </div>
+            <button type="button" class="btn-primary btn-select-sim-type" data-type="INCOME_OR_CORPORATE_TAX">Configurer IS</button>
+          </div>
+
+          <div class="card" style="display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">4. Impact d'une Dépense</h4>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Impact indicatif d'une dépense HT sur la TVA nette, l'impôt et la trésorerie réelle.</p>
+            </div>
+            <button type="button" class="btn-primary btn-select-sim-type" data-type="EXPENSE_IMPACT">Configurer Dépense</button>
+          </div>
+        </div>
+
+        <!-- Formulaire dynamique de simulation -->
+        <div id="sim-form-container" class="card" style="margin-bottom:1.5rem;">
+          <h3 id="sim-form-title" style="margin-top:0;">Paramètres de la simulation TVA</h3>
+          <form id="sim-run-form">
+            <input type="hidden" id="sim-type-input" value="VAT_SUMMARY" />
+            <div id="sim-fields-container" class="form-grid" style="margin-bottom:1rem;"></div>
+            <div style="display:flex; gap:0.75rem; justify-content:flex-end;">
+              <button type="button" id="sim-reset-btn" class="btn-secondary">Réinitialiser</button>
+              <button type="submit" id="sim-submit-btn" class="btn-primary">Lancer la simulation</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Encart d'affichage du résultat -->
+        <div id="sim-result-container" class="card hidden" style="margin-bottom:1.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="margin:0;">Résultat indicatif de la simulation</h3>
+            <span id="sim-result-status-badge" class="badge"></span>
+          </div>
+          <div id="sim-result-disclaimer" class="cn-state-box cn-state-warning" style="margin-bottom:1rem; font-size:0.85rem;"></div>
+          <div id="sim-result-details" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1rem;"></div>
+          <div id="sim-result-assumptions" style="font-size:0.85rem; color:var(--cn-text-secondary); background:var(--cn-bg-app); padding:0.75rem; border-radius:6px;"></div>
+        </div>
+
+        <!-- Historique des simulations du dossier -->
         <div class="card">
-          <h3>Module 8 — Simulateur micro-entrepreneur FR Versionné (Planifié au Lot 1.6)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Simulation déterministe versionnée avec sauvegarde de l'historique par dossier et avertissement réglementaire — livrée au Lot 1.6.
-          </p>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="margin:0;">Historique des simulations du dossier actif</h3>
+            <button type="button" id="btn-refresh-simulations" class="btn-secondary">Actualiser l'historique</button>
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Statut</th>
+                  <th>Version Règles</th>
+                  <th>Résultat clé</th>
+                </tr>
+              </thead>
+              <tbody id="simulations-history-tbody">
+                <tr><td colspan="5" style="text-align:center; color:var(--cn-text-secondary); padding:1rem;">Aucune simulation enregistrée pour ce dossier.</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1587,13 +1666,70 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 10 : EXPORTS & PARAMÈTRES / PISTE D'AUDIT SHA-256 -->
+      <!-- ONGLET 10 : EXPORTS SÉCURISÉS & PARAMÈTRES / PISTE D'AUDIT SHA-256 -->
       <section id="tab-settings" class="tab-panel hidden">
-        <div class="card">
-          <h3>Paramètres de la plateforme, Réserves Réglementaires &amp; Piste d'Audit SHA-256</h3>
+        <div class="card" style="margin-bottom:1.5rem;">
+          <h3 style="margin-top:0;">Centre d'Exports Sécurisés &amp; FEC Préliminaire (Module 9, §21)</h3>
           <div class="cn-state-box cn-state-confirm" style="margin-bottom:1rem;">
-            <strong>Réserve réglementaire (Section 4) :</strong> Les calculs de TVA, les barèmes sociaux, les mentions de facturation et l'export FEC demeurent explicitement provisoires jusqu'à qualification formelle par un expert-comptable et tests représentatifs documentés.
+            <strong>Sécurité des exports :</strong> Tous les exports CSV intègrent une neutralisation stricte des formules tableur (CSV Injection / DDE). L'export FEC (Fichier des Écritures Comptables) respecte scrupuleusement la structure officielle en 18 colonnes de l'article A.47 A-1 du Livre des Procédures Fiscales (LPF).
           </div>
+
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:1.25rem;">
+            <!-- Carte Exports CSV -->
+            <div style="border:1px solid var(--cn-border); border-radius:8px; padding:1.25rem; background:var(--cn-bg-surface); display:flex; flex-direction:column; justify-content:space-between;">
+              <div>
+                <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">Exports CSV Sécurisés (Anti-Injection)</h4>
+                <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Fichiers encodés en UTF-8 avec BOM pour une ouverture directe sous Excel et LibreOffice.</p>
+
+                <div style="margin-bottom:1rem;">
+                  <label for="export-csv-delimiter" style="font-size:0.85rem; display:block; margin-bottom:0.35rem; font-weight:600;">Séparateur de colonnes :</label>
+                  <select id="export-csv-delimiter" style="width:100%; padding:0.4rem; border:1px solid var(--cn-border); border-radius:4px;">
+                    <option value="," selected>Virgule (,) — Standard RFC 4180</option>
+                    <option value=";">Point-virgule (;) — Standard Excel français</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                <button type="button" class="btn-secondary btn-export-csv" data-type="invoices">Exporter les Factures (.csv)</button>
+                <button type="button" class="btn-secondary btn-export-csv" data-type="bank">Exporter les Opérations Bancaires (.csv)</button>
+                <button type="button" class="btn-secondary btn-export-csv" data-type="entries">Exporter le Journal Comptable (.csv)</button>
+                <button type="button" class="btn-secondary btn-export-csv" data-type="anomalies">Exporter le Rapport d'Anomalies (.csv)</button>
+                <button type="button" class="btn-secondary btn-export-csv" data-type="audit">Exporter la Piste d'Audit (.csv)</button>
+              </div>
+            </div>
+
+            <!-- Carte Export FEC -->
+            <div style="border:1px solid var(--cn-border); border-radius:8px; padding:1.25rem; background:var(--cn-bg-surface); display:flex; flex-direction:column; justify-content:space-between;">
+              <div>
+                <h4 style="margin:0 0 0.5rem 0; color:var(--cn-primary);">Export FEC Préliminaire (art. A.47 A-1 LPF)</h4>
+                <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0 0 1rem 0;">Fichier officiel des écritures comptables (18 colonnes délimitées par tabulation, format DGFiP).</p>
+
+                <div class="cn-state-box cn-state-warning" style="margin-bottom:1rem; font-size:0.8rem;">
+                  <strong>Avertissement légal obligatoire :</strong> Export technique préliminaire. La conformité fiscale définitive relève de la responsabilité de l'expert-comptable lors de la clôture des comptes.
+                </div>
+
+                <div style="margin-bottom:0.75rem;">
+                  <label for="fec-decimal-sep" style="font-size:0.85rem; display:block; margin-bottom:0.35rem; font-weight:600;">Séparateur décimal des montants :</label>
+                  <select id="fec-decimal-sep" style="width:100%; padding:0.4rem; border:1px solid var(--cn-border); border-radius:4px;">
+                    <option value="," selected>Virgule (,) — Conforme DGFiP</option>
+                    <option value=".">Point (.)</option>
+                  </select>
+                </div>
+
+                <div style="margin-bottom:1rem;">
+                  <label for="fec-closing-date" style="font-size:0.85rem; display:block; margin-bottom:0.35rem; font-weight:600;">Date de clôture / Fin d'exercice :</label>
+                  <input type="date" id="fec-closing-date" value="2026-12-31" style="width:100%; padding:0.4rem; border:1px solid var(--cn-border); border-radius:4px;" />
+                </div>
+              </div>
+
+              <button type="button" id="btn-download-fec" class="btn-primary" style="width:100%;">Générer &amp; Télécharger le FEC (.txt)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Paramètres de la plateforme &amp; Piste d'Audit SHA-256</h3>
           <div id="settings-summary" style="font-size:0.9rem; margin-bottom:1rem;"></div>
           <h4>Journal d'audit inaltérable (Chaînage cryptographique SHA-256)</h4>
           <div class="table-responsive">
@@ -1912,6 +2048,11 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           showAnomaliesNoDossierState();
         }
       }
+      if (targetTabId === "tab-simulator") {
+        if (activeDossierId) {
+          loadSimulationsHistory(activeDossierId);
+        }
+      }
     }
 
     document.querySelectorAll(".nav-btn, .nav-sub-btn").forEach((btn) => {
@@ -1964,6 +2105,11 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           await loadAnomaliesList(activeDossierId);
         } else {
           showAnomaliesNoDossierState();
+        }
+      }
+      if (!document.getElementById("tab-simulator").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadSimulationsHistory(activeDossierId);
         }
       }
     });
@@ -4364,6 +4510,277 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         return;
       }
       await resolveAnomalyAction(currentAnomalyToResolve.id, status, justif);
+    });
+
+    // =========================================================================
+    // JAVASCRIPT MODULE 7 : SIMULATIONS INDICATIVES VERSIONNÉES (§19)
+    // =========================================================================
+    function setupSimForm(simType) {
+      const container = document.getElementById("sim-fields-container");
+      const title = document.getElementById("sim-form-title");
+      const typeInput = document.getElementById("sim-type-input");
+      typeInput.value = simType;
+
+      if (simType === "VAT_SUMMARY") {
+        title.textContent = "Paramètres de la simulation TVA indicative";
+        container.innerHTML = '<div>' +
+          '<label for="sim-vat-collected">TVA collectée (€)</label>' +
+          '<input type="number" id="sim-vat-collected" step="0.01" min="0" value="2000.00" required />' +
+          '</div>' +
+          '<div>' +
+          '<label for="sim-vat-deductible">TVA déductible (€)</label>' +
+          '<input type="number" id="sim-vat-deductible" step="0.01" min="0" value="800.00" required />' +
+          '</div>';
+      } else if (simType === "SOCIAL_CONTRIBUTIONS") {
+        title.textContent = "Paramètres de la simulation Cotisations Sociales";
+        container.innerHTML = '<div>' +
+          '<label for="sim-soc-revenue">Revenu ou rémunération nette annuelle (€)</label>' +
+          '<input type="number" id="sim-soc-revenue" step="0.01" min="0" value="45000.00" required />' +
+          '</div>';
+      } else if (simType === "INCOME_OR_CORPORATE_TAX") {
+        title.textContent = "Paramètres de la simulation Impôt sur les Sociétés (IS)";
+        container.innerHTML = '<div>' +
+          '<label for="sim-tax-profit">Bénéfice fiscal imposable (€)</label>' +
+          '<input type="number" id="sim-tax-profit" step="0.01" min="0" value="60000.00" required />' +
+          '</div>' +
+          '<div style="display:flex; align-items:center; gap:0.5rem; margin-top:1.5rem;">' +
+          '<input type="checkbox" id="sim-tax-pme" checked />' +
+          '<label for="sim-tax-pme" style="margin:0; font-size:0.9rem;">Éligible au taux réduit PME (15 % jusqu\'à 42 500 €)</label>' +
+          '</div>';
+      } else if (simType === "EXPENSE_IMPACT") {
+        title.textContent = "Paramètres de la simulation Impact d'une Dépense";
+        container.innerHTML = '<div>' +
+          '<label for="sim-exp-amount">Montant net HT de la dépense (€)</label>' +
+          '<input type="number" id="sim-exp-amount" step="0.01" min="0" value="1000.00" required />' +
+          '</div>' +
+          '<div>' +
+          '<label for="sim-exp-vat-rate">Taux de TVA déductible (%)</label>' +
+          '<select id="sim-exp-vat-rate">' +
+          '<option value="2000" selected>20,0 % (Taux normal)</option>' +
+          '<option value="1000">10,0 % (Taux intermédiaire)</option>' +
+          '<option value="550">5,5 % (Taux réduit)</option>' +
+          '<option value="210">2,1 % (Taux super réduit)</option>' +
+          '<option value="0">0,0 % (Exonéré / Non assujetti)</option>' +
+          '</select>' +
+          '</div>' +
+          '<div>' +
+          '<label for="sim-exp-tax-rate">Taux d\'IS marginal applicable (%)</label>' +
+          '<select id="sim-exp-tax-rate">' +
+          '<option value="2500" selected>25,0 % (Taux normal IS)</option>' +
+          '<option value="1500">15,0 % (Taux réduit PME)</option>' +
+          '<option value="0">0,0 % (Non déductible ou exonéré)</option>' +
+          '</select>' +
+          '</div>';
+      }
+    }
+
+    async function loadSimulationsHistory(dossierId) {
+      if (!dossierId) return;
+      const tbody = document.getElementById("simulations-history-tbody");
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--cn-text-secondary); padding:1rem;">Chargement des simulations...</td></tr>';
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/simulations");
+        const list = res.simulations || [];
+        if (list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--cn-text-secondary); padding:1rem;">Aucune simulation enregistrée pour ce dossier.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = list.map((sim) => {
+          let keyVal = "—";
+          const r = sim.results || {};
+          if (sim.simulationType === "VAT_SUMMARY" && r.netVatDueMinor !== undefined) {
+            keyVal = (r.netVatDueMinor >= 0 ? "TVA à payer : " : "Crédit TVA : ") + (Math.abs(r.netVatDueMinor) / 100).toFixed(2) + " €";
+          } else if (sim.simulationType === "SOCIAL_CONTRIBUTIONS" && r.totalContributionsMinor !== undefined) {
+            keyVal = "Cotisations : " + (r.totalContributionsMinor / 100).toFixed(2) + " €";
+          } else if (sim.simulationType === "INCOME_OR_CORPORATE_TAX" && r.taxDueMinor !== undefined) {
+            keyVal = "IS estimé : " + (r.taxDueMinor / 100).toFixed(2) + " €";
+          } else if (sim.simulationType === "EXPENSE_IMPACT" && r.cashImpactMinor !== undefined) {
+            keyVal = "Impact tréso : " + (r.cashImpactMinor / 100).toFixed(2) + " €";
+          }
+          const badgeClass = sim.status === "SIMULATED" ? "badge-valid" : "badge-danger";
+          return "<tr>" +
+            "<td class='font-mono-tabular'>" + sim.createdAt.slice(0, 19).replace("T", " ") + "</td>" +
+            "<td><strong>" + sim.simulationType + "</strong></td>" +
+            "<td><span class='badge " + badgeClass + "'>" + sim.status + "</span></td>" +
+            "<td><code class='font-mono-tabular'>" + sim.countryConfigVersionId + "</code></td>" +
+            "<td class='font-mono-tabular'><strong>" + keyVal + "</strong></td>" +
+            "</tr>";
+        }).join("");
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--cn-status-danger); padding:1rem;">Erreur de chargement : ' + err.message + '</td></tr>';
+      }
+    }
+
+    document.querySelectorAll(".btn-select-sim-type").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const type = btn.getAttribute("data-type");
+        setupSimForm(type);
+        document.getElementById("sim-form-container").scrollIntoView({ behavior: "smooth" });
+      });
+    });
+
+    document.getElementById("sim-reset-btn").addEventListener("click", () => {
+      const type = document.getElementById("sim-type-input").value;
+      setupSimForm(type);
+      document.getElementById("sim-result-container").classList.add("hidden");
+    });
+
+    document.getElementById("btn-refresh-simulations").addEventListener("click", () => {
+      if (activeDossierId) loadSimulationsHistory(activeDossierId);
+    });
+
+    document.getElementById("sim-run-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+      const simType = document.getElementById("sim-type-input").value;
+      let parameters = {};
+
+      if (simType === "VAT_SUMMARY") {
+        const col = parseFloat(document.getElementById("sim-vat-collected").value || "0");
+        const ded = parseFloat(document.getElementById("sim-vat-deductible").value || "0");
+        parameters = {
+          collectedVatMinor: Math.round(col * 100),
+          deductibleVatMinor: Math.round(ded * 100)
+        };
+      } else if (simType === "SOCIAL_CONTRIBUTIONS") {
+        const rev = parseFloat(document.getElementById("sim-soc-revenue").value || "0");
+        parameters = {
+          annualNetRevenueMinor: Math.round(rev * 100)
+        };
+      } else if (simType === "INCOME_OR_CORPORATE_TAX") {
+        const prof = parseFloat(document.getElementById("sim-tax-profit").value || "0");
+        const pme = document.getElementById("sim-tax-pme").checked;
+        parameters = {
+          taxableProfitMinor: Math.round(prof * 100),
+          isEligiblePmeReducedRate: pme
+        };
+      } else if (simType === "EXPENSE_IMPACT") {
+        const amt = parseFloat(document.getElementById("sim-exp-amount").value || "0");
+        const vatRate = parseInt(document.getElementById("sim-exp-vat-rate").value, 10);
+        const taxRate = parseInt(document.getElementById("sim-exp-tax-rate").value, 10);
+        parameters = {
+          expenseNetMinor: Math.round(amt * 100),
+          vatRateBps: vatRate,
+          corporateTaxRateBps: taxRate
+        };
+      }
+
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/simulations", {
+          method: "POST",
+          body: JSON.stringify({ simulationType: simType, parameters })
+        });
+        const sim = res.simulation;
+        const resContainer = document.getElementById("sim-result-container");
+        const badge = document.getElementById("sim-result-status-badge");
+        const disclaimer = document.getElementById("sim-result-disclaimer");
+        const details = document.getElementById("sim-result-details");
+        const assumptions = document.getElementById("sim-result-assumptions");
+
+        badge.textContent = sim.status;
+        badge.className = "badge " + (sim.status === "SIMULATED" ? "badge-valid" : "badge-danger");
+        disclaimer.textContent = sim.regulatoryDisclaimer;
+
+        const r = sim.results || {};
+        let detailsHtml = "";
+        for (const [k, v] of Object.entries(r)) {
+          let label = k;
+          let val = v;
+          if (typeof v === "number" && k.endsWith("Minor")) {
+            val = (v / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+            label = k.replace("Minor", "");
+          } else if (typeof v === "number" && k.endsWith("Bps")) {
+            val = (v / 100).toFixed(2) + " %";
+            label = k.replace("Bps", "");
+          }
+          detailsHtml += "<div style='padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);'>" +
+            "<div style='font-size:0.8rem; color:var(--cn-text-secondary); text-transform:uppercase;'>" + label + "</div>" +
+            "<div class='font-mono-tabular' style='font-size:1.2rem; font-weight:700; color:var(--cn-primary);'>" + val + "</div>" +
+            "</div>";
+        }
+        details.innerHTML = detailsHtml;
+
+        const asm = sim.assumptions || [];
+        assumptions.innerHTML = "<strong>Hypothèses retenues :</strong><ul style='margin:0.5rem 0 0 1.2rem; padding:0;'>" +
+          asm.map((a) => "<li>" + a + "</li>").join("") + "</ul>";
+
+        resContainer.classList.remove("hidden");
+        resContainer.scrollIntoView({ behavior: "smooth" });
+        showFeedback("Simulation calculée et archivée.");
+        await loadSimulationsHistory(activeDossierId);
+      } catch (err) {
+        showFeedback("Erreur simulation : " + err.message, true);
+      }
+    });
+
+    setupSimForm("VAT_SUMMARY");
+
+    // =========================================================================
+    // JAVASCRIPT MODULE 9 : CENTRE D'EXPORTS SÉCURISÉS & FEC PRÉLIMINAIRE (§21)
+    // =========================================================================
+    async function triggerSecureDownload(url, defaultFilename) {
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+      try {
+        const headers = Object.assign({}, getJustificationHeaders());
+        if (authToken) headers["Authorization"] = "Bearer " + authToken;
+        if (activeOrgId) headers["X-Organization-Id"] = activeOrgId;
+
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || ("Erreur " + response.status + " lors du téléchargement"));
+        }
+
+        const disp = response.headers.get("Content-Disposition");
+        let filename = defaultFilename;
+        if (disp && disp.includes("filename=")) {
+          const match = disp.match(/filename="?([^";]+)"?/);
+          if (match && match[1]) filename = match[1];
+        }
+
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(blobUrl);
+        a.remove();
+        showFeedback("Fichier téléchargé avec succès : " + filename);
+      } catch (err) {
+        showFeedback("Échec du téléchargement : " + err.message, true);
+      }
+    }
+
+    document.querySelectorAll(".btn-export-csv").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!activeDossierId) {
+          showFeedback("Veuillez sélectionner un dossier client actif.", true);
+          return;
+        }
+        const exportType = btn.getAttribute("data-type");
+        const delimiter = document.getElementById("export-csv-delimiter").value;
+        const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/exports/csv/" + exportType + "?delimiter=" + encodeURIComponent(delimiter);
+        triggerSecureDownload(url, "export_" + exportType + ".csv");
+      });
+    });
+
+    document.getElementById("btn-download-fec").addEventListener("click", () => {
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+      const decimalSeparator = document.getElementById("fec-decimal-sep").value;
+      const closingDate = document.getElementById("fec-closing-date").value;
+      const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/exports/fec?decimalSeparator=" + encodeURIComponent(decimalSeparator) + "&closingDate=" + encodeURIComponent(closingDate);
+      triggerSecureDownload(url, "export_fec.txt");
     });
 
     bootstrapAuthenticatedApp();
