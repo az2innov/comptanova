@@ -1110,13 +1110,240 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 5 : JOURNAL COMPTABLE & PCG (Lot 1.4) -->
+      <!-- ONGLET 5 : JOURNAL COMPTABLE & PCG (Module 5 — Lot 1.5) -->
       <section id="tab-journal" class="tab-panel hidden">
-        <div class="card">
-          <h3>Module 5 — Journal comptable &amp; Plan Comptable Français (Planifié au Lot 1.4)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Le Plan Comptable Général (PCG) et les journaux standards (<code>ACH</code>, <code>VEN</code>, <code>BQ</code>, <code>OD</code>, <code>AN</code>) sont d'ores et déjà initialisés de manière idempotente sur chaque dossier (Lot 1.1). La saisie multi-lignes interactive et la validation irréversible seront livrées au Lot 1.4.
-          </p>
+        <!-- Bannière explicite Saisie comptable & Invariants réglementaires -->
+        <div class="card" style="border-left: 4px solid var(--cn-primary); margin-bottom: 1rem; background: var(--cn-surface);">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem;">
+            <div>
+              <h3 style="margin:0 0 0.35rem; color:var(--cn-primary);">Module 5 — Saisie comptable au kilomètre &amp; Journaux</h3>
+              <p style="margin:0; font-size:0.85rem; color:var(--cn-text-secondary); line-height:1.4;">
+                Partie double stricte multi-lignes, contrôle d'équilibre Débit/Crédit en centimes, Plan Comptable Général (PCG ANC), 5 journaux officiels (<code>VE</code>, <code>AC</code>, <code>BQ</code>, <code>OD</code>, <code>AN</code>), validation humaine inaltérable et extourne contrôlée.
+              </p>
+            </div>
+            <div style="font-size:0.75rem; background:var(--cn-surface-alt); border:1px solid var(--cn-border); border-radius:4px; padding:6px 10px; max-width:320px;">
+              <strong>Invariants LPF &amp; FEC :</strong>
+              <div style="color:var(--cn-text-secondary); margin-top:2px;">
+                Toute écriture validée est verrouillée en modification directe. L'annulation s'opère par extourne comptable symétrique.
+              </div>
+            </div>
+          </div>
+
+          <!-- Barre de synthèse financière du journal -->
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; margin-top:1rem; padding-top:0.75rem; border-top:1px solid var(--cn-border);">
+            <div style="background:var(--cn-surface-alt); padding:0.5rem 0.75rem; border-radius:4px; border:1px solid var(--cn-border);">
+              <div style="font-size:0.75rem; color:var(--cn-text-secondary);">Écritures affichées</div>
+              <div id="journal-stat-count" class="font-mono-tabular" style="font-size:1.1rem; font-weight:700; color:var(--cn-text-primary);">0</div>
+            </div>
+            <div style="background:var(--cn-surface-alt); padding:0.5rem 0.75rem; border-radius:4px; border:1px solid var(--cn-border);">
+              <div style="font-size:0.75rem; color:var(--cn-text-secondary);">Total Débit</div>
+              <div id="journal-stat-debit" class="font-mono-tabular" style="font-size:1.1rem; font-weight:700; color:var(--cn-text-primary);">0,00 €</div>
+            </div>
+            <div style="background:var(--cn-surface-alt); padding:0.5rem 0.75rem; border-radius:4px; border:1px solid var(--cn-border);">
+              <div style="font-size:0.75rem; color:var(--cn-text-secondary);">Total Crédit</div>
+              <div id="journal-stat-credit" class="font-mono-tabular" style="font-size:1.1rem; font-weight:700; color:var(--cn-text-primary);">0,00 €</div>
+            </div>
+            <div style="background:var(--cn-surface-alt); padding:0.5rem 0.75rem; border-radius:4px; border:1px solid var(--cn-border);">
+              <div style="font-size:0.75rem; color:var(--cn-text-secondary);">Équilibre général</div>
+              <div id="journal-stat-balance" style="font-size:0.85rem; font-weight:700; color:var(--cn-success); margin-top:0.2rem;">✓ Équilibré</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sous-onglets internes : Consultation vs Nouvelle saisie -->
+        <div style="display:flex; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.5rem;">
+          <button type="button" id="subtab-btn-journal-list" class="btn-primary" style="padding:6px 14px; font-size:0.85rem;">Consultation des écritures &amp; Journaux</button>
+          <button type="button" id="subtab-btn-journal-create" class="btn-secondary" style="padding:6px 14px; font-size:0.85rem;">+ Nouvelle saisie au kilomètre</button>
+        </div>
+
+        <!-- VUE 1 : CONSULTATION DU JOURNAL -->
+        <div id="subtab-view-journal-list" class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.85rem; flex-wrap:wrap; gap:0.5rem;">
+            <h4 style="margin:0;">Livre-Journal des écritures comptables</h4>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+              <select id="filter-journal-code" style="font-size:0.85rem; padding:4px 8px;">
+                <option value="ALL">Tous les journaux</option>
+                <option value="VE">VE — Journal des Ventes</option>
+                <option value="AC">AC — Journal des Achats</option>
+                <option value="BQ">BQ — Journal de Banque</option>
+                <option value="OD">OD — Opérations Diverses</option>
+                <option value="AN">AN — À-Nouveaux</option>
+              </select>
+              <select id="filter-journal-status" style="font-size:0.85rem; padding:4px 8px;">
+                <option value="ALL">Tous les statuts</option>
+                <option value="DRAFT">Brouillons (DRAFT)</option>
+                <option value="AI_SUGGESTION">Suggestions IA</option>
+                <option value="VALIDATED">Validées (VALIDATED)</option>
+                <option value="REVERSED">Extournées (REVERSED)</option>
+              </select>
+              <input type="text" id="filter-journal-search" placeholder="Rechercher (pièce, libellé)..." style="font-size:0.85rem; padding:4px 8px; width:180px;" />
+              <button type="button" id="btn-refresh-journal-entries" class="btn-secondary" style="font-size:0.85rem; padding:4px 10px;">Actualiser</button>
+            </div>
+          </div>
+
+          <div id="journal-no-dossier" class="cn-state-box cn-state-empty">
+            Veuillez sélectionner un dossier client actif dans la barre supérieure pour consulter son journal comptable.
+          </div>
+
+          <div id="journal-entries-loading" class="cn-state-box cn-state-loading hidden">
+            Chargement des écritures comptables du dossier...
+          </div>
+
+          <div id="journal-entries-empty" class="cn-state-box cn-state-empty hidden">
+            Aucune écriture comptable enregistrée pour ce dossier avec les filtres sélectionnés.
+          </div>
+
+          <div id="journal-entries-error" class="cn-state-box cn-state-error hidden">
+            <span id="journal-entries-error-msg">Erreur lors de la récupération des écritures comptables.</span>
+          </div>
+
+          <div id="journal-entries-table-wrapper" class="table-responsive hidden">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>N° Pièce</th>
+                  <th>Journal</th>
+                  <th>Libellé de l'écriture</th>
+                  <th style="text-align:right;">Débit (€)</th>
+                  <th style="text-align:right;">Crédit (€)</th>
+                  <th style="text-align:center;">Équilibre</th>
+                  <th>Statut</th>
+                  <th>Validé par</th>
+                  <th style="text-align:center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="journal-entries-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- VUE 2 : NOUVELLE SAISIE AU KILOMÈTRE -->
+        <div id="subtab-view-journal-create" class="card hidden">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h4 style="margin:0;">Saisie d'écriture comptable au kilomètre (Partie double)</h4>
+            <span style="font-size:0.8rem; color:var(--cn-text-secondary);">Contrôle d'équilibre strict en temps réel</span>
+          </div>
+
+          <form id="accounting-entry-form">
+            <!-- Entête d'écriture -->
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; margin-bottom:1rem; background:var(--cn-surface-alt); padding:0.75rem; border-radius:4px; border:1px solid var(--cn-border);">
+              <div>
+                <label for="entry-journal-select" style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.25rem;">Journal comptable *</label>
+                <select id="entry-journal-select" required style="width:100%; font-size:0.85rem; padding:6px 8px;">
+                  <option value="VE">VE — Journal des Ventes (VE)</option>
+                  <option value="AC">AC — Journal des Achats (AC)</option>
+                  <option value="BQ">BQ — Journal de Banque (BQ)</option>
+                  <option value="OD">OD — Opérations Diverses (OD)</option>
+                  <option value="AN">AN — À-Nouveaux (AN)</option>
+                </select>
+              </div>
+              <div>
+                <label for="entry-date-input" style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.25rem;">Date de pièce *</label>
+                <input type="date" id="entry-date-input" required style="width:100%; font-size:0.85rem; padding:6px 8px;" />
+              </div>
+              <div>
+                <label for="entry-piece-number-input" style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.25rem;">Numéro de pièce / justificatif *</label>
+                <input type="text" id="entry-piece-number-input" placeholder="Ex: FAC-2026-0042, VIR-001..." required style="width:100%; font-size:0.85rem; padding:6px 8px;" />
+              </div>
+              <div style="grid-column: 1 / -1;">
+                <label for="entry-label-input" style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:0.25rem;">Libellé de l'écriture comptable *</label>
+                <input type="text" id="entry-label-input" placeholder="Ex: Facture prestation conseil client SARL Dupont..." required style="width:100%; font-size:0.85rem; padding:6px 8px;" />
+              </div>
+            </div>
+
+            <!-- Grille multi-lignes -->
+            <div style="margin-bottom:1rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                <label style="font-size:0.85rem; font-weight:600;">Lignes d'écriture (min. 2 lignes, Débit = Crédit) *</label>
+                <button type="button" id="btn-add-entry-line" class="btn-secondary" style="font-size:0.8rem; padding:4px 10px;">+ Ajouter une ligne</button>
+              </div>
+
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:40px;">#</th>
+                      <th style="min-width:240px;">Compte PCG *</th>
+                      <th style="min-width:220px;">Libellé de la ligne *</th>
+                      <th style="width:140px; text-align:right;">Débit (€)</th>
+                      <th style="width:140px; text-align:right;">Crédit (€)</th>
+                      <th style="width:50px; text-align:center;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="entry-lines-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Barre d'équilibre temps réel -->
+            <div id="entry-balance-box" style="display:flex; justify-content:space-between; align-items:center; background:var(--cn-surface-alt); border:2px solid var(--cn-border); border-radius:6px; padding:0.75rem 1rem; margin-bottom:1.25rem; flex-wrap:wrap; gap:0.75rem;">
+              <div style="display:flex; gap:1.5rem; align-items:center; flex-wrap:wrap;">
+                <div>
+                  <span style="font-size:0.75rem; color:var(--cn-text-secondary); display:block;">Total Débit :</span>
+                  <span id="entry-live-total-debit" class="font-mono-tabular" style="font-size:1.15rem; font-weight:700; color:var(--cn-text-primary);">0,00 €</span>
+                </div>
+                <div>
+                  <span style="font-size:0.75rem; color:var(--cn-text-secondary); display:block;">Total Crédit :</span>
+                  <span id="entry-live-total-credit" class="font-mono-tabular" style="font-size:1.15rem; font-weight:700; color:var(--cn-text-primary);">0,00 €</span>
+                </div>
+                <div>
+                  <span style="font-size:0.75rem; color:var(--cn-text-secondary); display:block;">Écart / Différence :</span>
+                  <span id="entry-live-diff" class="font-mono-tabular" style="font-size:1.15rem; font-weight:700; color:var(--cn-danger);">0,00 €</span>
+                </div>
+              </div>
+              <div id="entry-live-balance-badge" style="font-size:0.85rem; font-weight:700; padding:4px 10px; border-radius:4px; background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">
+                ⚠ Écriture déséquilibrée
+              </div>
+            </div>
+
+            <!-- Actions de soumission -->
+            <div style="display:flex; gap:0.75rem; justify-content:flex-end; flex-wrap:wrap;">
+              <button type="button" id="btn-cancel-entry-form" class="btn-secondary" style="font-size:0.85rem; padding:8px 16px;">Annuler</button>
+              <button type="button" id="btn-save-entry-draft" class="btn-secondary" style="font-size:0.85rem; padding:8px 16px;">Enregistrer en brouillon (DRAFT)</button>
+              <button type="submit" id="btn-validate-entry-submit" class="btn-primary" style="font-size:0.85rem; padding:8px 18px;" disabled title="L'écriture doit être parfaitement équilibrée (Débit = Crédit > 0) pour être validée.">✓ Valider formellement l'écriture</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- MODALE DE DÉTAIL D'ÉCRITURE COMPTABLE -->
+        <div id="entry-detail-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
+          <div class="modal-card" style="max-width:800px; width:95%;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.75rem;">
+              <div>
+                <h3 id="entry-modal-title" style="margin:0 0 0.25rem;">Détail de la pièce comptable</h3>
+                <div id="entry-modal-subtitle" style="font-size:0.85rem; color:var(--cn-text-secondary);"></div>
+              </div>
+              <button type="button" id="entry-modal-close-btn" class="btn-secondary" style="font-size:0.85rem; padding:4px 8px;">✕ Fermer</button>
+            </div>
+
+            <div id="entry-modal-meta" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.5rem; margin-bottom:1rem; background:var(--cn-surface-alt); padding:0.75rem; border-radius:4px; font-size:0.85rem;"></div>
+
+            <div class="table-responsive" style="margin-bottom:1rem;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Compte PCG</th>
+                    <th>Intitulé du compte</th>
+                    <th>Libellé de la ligne</th>
+                    <th style="text-align:right;">Débit (€)</th>
+                    <th style="text-align:right;">Crédit (€)</th>
+                  </tr>
+                </thead>
+                <tbody id="entry-modal-lines-tbody"></tbody>
+                <tfoot>
+                  <tr style="font-weight:700; background:var(--cn-surface-alt);">
+                    <td colspan="4" style="text-align:right;">Totaux :</td>
+                    <td id="entry-modal-total-debit" class="font-mono-tabular" style="text-align:right;">0,00 €</td>
+                    <td id="entry-modal-total-credit" class="font-mono-tabular" style="text-align:right;">0,00 €</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div id="entry-modal-actions" style="display:flex; justify-content:flex-end; gap:0.5rem; border-top:1px solid var(--cn-border); padding-top:0.75rem;"></div>
+          </div>
         </div>
       </section>
 
@@ -1462,6 +1689,15 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           showDocumentsNoDossierState();
         }
       }
+      if (targetTabId === "tab-journal") {
+        if (activeDossierId) {
+          loadAccountingJournals(activeDossierId);
+          loadAccountingAccounts(activeDossierId);
+          loadAccountingEntriesList(activeDossierId);
+        } else {
+          showJournalNoDossierState();
+        }
+      }
     }
 
     document.querySelectorAll(".nav-btn, .nav-sub-btn").forEach((btn) => {
@@ -1493,6 +1729,15 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           showDocumentsNoDossierState();
         }
       }
+      if (!document.getElementById("tab-journal").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadAccountingJournals(activeDossierId);
+          await loadAccountingAccounts(activeDossierId);
+          await loadAccountingEntriesList(activeDossierId);
+        } else {
+          showJournalNoDossierState();
+        }
+      }
     });
 
     document.getElementById("open-active-dossier-detail-btn").addEventListener("click", async () => {
@@ -1502,12 +1747,16 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       }
     });
 
-    // Support clavier : touche Escape pour refermer la modale de confirmation d'archivage
+    // Support clavier : touche Escape pour refermer les modales
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         const modal = document.getElementById("archive-confirm-modal");
         if (modal && !modal.classList.contains("hidden")) {
           modal.classList.add("hidden");
+        }
+        const entryModal = document.getElementById("entry-detail-modal");
+        if (entryModal && !entryModal.classList.contains("hidden")) {
+          entryModal.classList.add("hidden");
         }
       }
     });
@@ -2671,6 +2920,693 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     });
 
     document.getElementById("doc-detail-close-btn").addEventListener("click", closeDocumentDetail);
+
+    // =========================================================================
+    // MODULE 5 — JOURNAL COMPTABLE & SAISIE AU KILOMÈTRE (Phase 1, Lot 1.5)
+    // =========================================================================
+    let dossierAccountsCache = [];
+    let dossierJournalsCache = [];
+    let currentJournalCodeFilter = "ALL";
+    let currentJournalStatusFilter = "ALL";
+    let currentJournalSearch = "";
+    let entryLinesData = [
+      { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 },
+      { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 }
+    ];
+
+    // Sous-onglets internes du Journal
+    const subtabBtnJournalList = document.getElementById("subtab-btn-journal-list");
+    const subtabBtnJournalCreate = document.getElementById("subtab-btn-journal-create");
+    const subtabViewJournalList = document.getElementById("subtab-view-journal-list");
+    const subtabViewJournalCreate = document.getElementById("subtab-view-journal-create");
+
+    if (subtabBtnJournalList && subtabBtnJournalCreate) {
+      subtabBtnJournalList.addEventListener("click", () => {
+        subtabBtnJournalList.className = "btn-primary";
+        subtabBtnJournalCreate.className = "btn-secondary";
+        subtabViewJournalList.classList.remove("hidden");
+        subtabViewJournalCreate.classList.add("hidden");
+        if (activeDossierId) {
+          loadAccountingEntriesList(activeDossierId);
+        }
+      });
+
+      subtabBtnJournalCreate.addEventListener("click", () => {
+        subtabBtnJournalCreate.className = "btn-primary";
+        subtabBtnJournalList.className = "btn-secondary";
+        subtabViewJournalCreate.classList.remove("hidden");
+        subtabViewJournalList.classList.add("hidden");
+        if (activeDossierId && dossierAccountsCache.length === 0) {
+          loadAccountingAccounts(activeDossierId);
+        }
+        renderEntryLinesForm();
+      });
+    }
+
+    function showJournalNoDossierState() {
+      document.getElementById("journal-no-dossier").classList.remove("hidden");
+      document.getElementById("journal-entries-loading").classList.add("hidden");
+      document.getElementById("journal-entries-empty").classList.add("hidden");
+      document.getElementById("journal-entries-error").classList.add("hidden");
+      document.getElementById("journal-entries-table-wrapper").classList.add("hidden");
+      document.getElementById("journal-stat-count").textContent = "0";
+      document.getElementById("journal-stat-debit").textContent = "0,00 €";
+      document.getElementById("journal-stat-credit").textContent = "0,00 €";
+      document.getElementById("journal-stat-balance").textContent = "En attente de dossier";
+      document.getElementById("journal-stat-balance").style.color = "var(--cn-text-secondary)";
+    }
+
+    async function loadAccountingJournals(dossierId) {
+      if (!activeOrgId || !dossierId) return;
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/accounting/journals");
+        dossierJournalsCache = res.journals || [];
+
+        // Mise à jour du filtre de journaux
+        const filterSelect = document.getElementById("filter-journal-code");
+        if (filterSelect && dossierJournalsCache.length > 0) {
+          const currentVal = filterSelect.value;
+          filterSelect.innerHTML = '<option value="ALL">Tous les journaux</option>';
+          dossierJournalsCache.forEach((j) => {
+            const opt = document.createElement("option");
+            opt.value = j.code;
+            opt.textContent = j.code + " — " + j.label;
+            filterSelect.appendChild(opt);
+          });
+          filterSelect.value = currentVal;
+        }
+
+        // Mise à jour du sélecteur de journal dans le formulaire de saisie
+        const formSelect = document.getElementById("entry-journal-select");
+        if (formSelect && dossierJournalsCache.length > 0) {
+          const currentVal = formSelect.value;
+          formSelect.innerHTML = "";
+          dossierJournalsCache.forEach((j) => {
+            const opt = document.createElement("option");
+            opt.value = j.code;
+            opt.textContent = j.code + " — " + j.label;
+            formSelect.appendChild(opt);
+          });
+          if (currentVal) formSelect.value = currentVal;
+        }
+      } catch (err) {
+        console.warn("Échec du chargement des journaux :", err.message);
+      }
+    }
+
+    async function loadAccountingAccounts(dossierId) {
+      if (!activeOrgId || !dossierId) return;
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/accounting/accounts");
+        dossierAccountsCache = res.accounts || [];
+        renderEntryLinesForm();
+      } catch (err) {
+        console.warn("Échec du chargement du plan de comptes :", err.message);
+      }
+    }
+
+    async function loadAccountingEntriesList(dossierId) {
+      if (!activeOrgId || !dossierId) {
+        showJournalNoDossierState();
+        return;
+      }
+
+      document.getElementById("journal-no-dossier").classList.add("hidden");
+      document.getElementById("journal-entries-loading").classList.remove("hidden");
+      document.getElementById("journal-entries-empty").classList.add("hidden");
+      document.getElementById("journal-entries-error").classList.add("hidden");
+      document.getElementById("journal-entries-table-wrapper").classList.add("hidden");
+
+      let query = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/accounting/entries?limit=100";
+      if (currentJournalCodeFilter && currentJournalCodeFilter !== "ALL") {
+        query += "&journalCode=" + encodeURIComponent(currentJournalCodeFilter);
+      }
+      if (currentJournalStatusFilter && currentJournalStatusFilter !== "ALL") {
+        query += "&status=" + encodeURIComponent(currentJournalStatusFilter);
+      }
+      if (currentJournalSearch) {
+        query += "&search=" + encodeURIComponent(currentJournalSearch);
+      }
+
+      try {
+        const res = await apiFetch(query);
+        document.getElementById("journal-entries-loading").classList.add("hidden");
+
+        const entries = res.entries || [];
+        const totalCount = res.totalCount || 0;
+        const totalDebit = (res.totalDebitSumMinor || 0) / 100;
+        const totalCredit = (res.totalCreditSumMinor || 0) / 100;
+
+        document.getElementById("journal-stat-count").textContent = String(totalCount);
+        document.getElementById("journal-stat-debit").textContent = totalDebit.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+        document.getElementById("journal-stat-credit").textContent = totalCredit.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+        const balEl = document.getElementById("journal-stat-balance");
+        if (res.isOverallBalanced) {
+          balEl.textContent = "✓ Équilibré";
+          balEl.style.color = "var(--cn-success)";
+        } else {
+          balEl.textContent = "⚠ Déséquilibre (" + Math.abs(totalDebit - totalCredit).toFixed(2) + " €)";
+          balEl.style.color = "var(--cn-danger)";
+        }
+
+        if (entries.length === 0) {
+          document.getElementById("journal-entries-empty").classList.remove("hidden");
+          return;
+        }
+
+        const tbody = document.getElementById("journal-entries-tbody");
+        tbody.innerHTML = "";
+
+        entries.forEach((e) => {
+          const tr = document.createElement("tr");
+
+          // Statut badge
+          let statusBadge = "";
+          if (e.status === "VALIDATED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Validée</span>';
+          } else if (e.status === "DRAFT") {
+            statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
+          } else if (e.status === "AI_SUGGESTION") {
+            statusBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">Suggestion IA</span>';
+          } else if (e.status === "REVERSED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Extournée</span>';
+          } else {
+            statusBadge = '<span class="badge">' + e.status + '</span>';
+          }
+
+          // Équilibre badge
+          const balanceBadge = e.isBalanced
+            ? '<span style="color:var(--cn-success); font-weight:600; font-size:0.8rem;">✓ OK</span>'
+            : '<span style="color:var(--cn-danger); font-weight:600; font-size:0.8rem;">⚠ Déséquilibré</span>';
+
+          const debitFormatted = (e.totalDebitMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const creditFormatted = (e.totalCreditMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+          // Boutons d'action
+          let actionsHtml = '<button type="button" class="btn-secondary btn-entry-view" data-entry-id="' + e.id + '" style="font-size:0.75rem; padding:3px 7px;">Détail</button>';
+
+          if (e.status === "DRAFT" || e.status === "AI_SUGGESTION") {
+            if (e.isBalanced) {
+              actionsHtml += ' <button type="button" class="btn-primary btn-entry-validate" data-entry-id="' + e.id + '" style="font-size:0.75rem; padding:3px 7px;">Valider</button>';
+            }
+            actionsHtml += ' <button type="button" class="btn-secondary btn-entry-delete" data-entry-id="' + e.id + '" style="font-size:0.75rem; padding:3px 7px; color:var(--cn-danger);">Supprimer</button>';
+          } else if (e.status === "VALIDATED") {
+            actionsHtml += ' <button type="button" class="btn-secondary btn-entry-reverse" data-entry-id="' + e.id + '" data-piece="' + e.pieceNumber + '" style="font-size:0.75rem; padding:3px 7px; color:var(--cn-warning);">Extourner</button>';
+          }
+
+          tr.innerHTML =
+            '<td class="font-mono-tabular" style="font-size:0.85rem;">' + e.entryDate + '</td>' +
+            '<td><strong class="font-mono-tabular" style="font-size:0.85rem;">' + e.pieceNumber + '</strong></td>' +
+            '<td><span class="badge font-mono-tabular">' + e.journalCode + '</span></td>' +
+            '<td style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + e.label + '">' + e.label + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + debitFormatted + ' €</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + creditFormatted + ' €</td>' +
+            '<td style="text-align:center;">' + balanceBadge + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td style="font-size:0.8rem; color:var(--cn-text-secondary);">' + (e.validatedByName || "-") + '</td>' +
+            '<td style="text-align:center; white-space:nowrap;">' + actionsHtml + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        // Attachement des écouteurs d'actions
+        document.querySelectorAll(".btn-entry-view").forEach((btn) => {
+          btn.addEventListener("click", () => openAccountingEntryDetail(btn.getAttribute("data-entry-id")));
+        });
+
+        document.querySelectorAll(".btn-entry-validate").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const entryId = btn.getAttribute("data-entry-id");
+            await validateAccountingEntryAction(entryId);
+          });
+        });
+
+        document.querySelectorAll(".btn-entry-reverse").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const entryId = btn.getAttribute("data-entry-id");
+            const piece = btn.getAttribute("data-piece");
+            await reverseAccountingEntryAction(entryId, piece);
+          });
+        });
+
+        document.querySelectorAll(".btn-entry-delete").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const entryId = btn.getAttribute("data-entry-id");
+            await deleteAccountingEntryAction(entryId);
+          });
+        });
+
+        document.getElementById("journal-entries-table-wrapper").classList.remove("hidden");
+      } catch (err) {
+        document.getElementById("journal-entries-loading").classList.add("hidden");
+        document.getElementById("journal-entries-error-msg").textContent = err.message || "Erreur de chargement du journal comptable.";
+        document.getElementById("journal-entries-error").classList.remove("hidden");
+      }
+    }
+
+    // Filtres du journal
+    document.getElementById("filter-journal-code").addEventListener("change", (e) => {
+      currentJournalCodeFilter = e.target.value;
+      if (activeDossierId) loadAccountingEntriesList(activeDossierId);
+    });
+
+    document.getElementById("filter-journal-status").addEventListener("change", (e) => {
+      currentJournalStatusFilter = e.target.value;
+      if (activeDossierId) loadAccountingEntriesList(activeDossierId);
+    });
+
+    let journalSearchDebounce = null;
+    document.getElementById("filter-journal-search").addEventListener("input", (e) => {
+      clearTimeout(journalSearchDebounce);
+      journalSearchDebounce = setTimeout(() => {
+        currentJournalSearch = e.target.value.trim();
+        if (activeDossierId) loadAccountingEntriesList(activeDossierId);
+      }, 300);
+    });
+
+    document.getElementById("btn-refresh-journal-entries").addEventListener("click", () => {
+      if (activeDossierId) loadAccountingEntriesList(activeDossierId);
+    });
+
+    // Formulaire de saisie au kilomètre : Gestion des lignes dynamiques
+    function renderEntryLinesForm() {
+      const tbody = document.getElementById("entry-lines-tbody");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+
+      if (entryLinesData.length < 2) {
+        entryLinesData.push({ generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 });
+      }
+
+      entryLinesData.forEach((line, idx) => {
+        const tr = document.createElement("tr");
+
+        // Options de comptes
+        let accountOptions = '<option value="">-- Sélectionner un compte PCG --</option>';
+        dossierAccountsCache.forEach((acc) => {
+          const selected = line.generalAccountCode === acc.accountNumber ? " selected" : "";
+          accountOptions += '<option value="' + acc.accountNumber + '"' + selected + '>' + acc.accountNumber + ' — ' + acc.label + '</option>';
+        });
+
+        const debitVal = line.debitMinor > 0 ? (line.debitMinor / 100).toFixed(2) : "";
+        const creditVal = line.creditMinor > 0 ? (line.creditMinor / 100).toFixed(2) : "";
+
+        tr.innerHTML =
+          '<td class="font-mono-tabular" style="font-size:0.85rem; text-align:center;">' + (idx + 1) + '</td>' +
+          '<td><select class="entry-line-account" data-idx="' + idx + '" required style="width:100%; font-size:0.85rem; padding:4px 6px;">' + accountOptions + '</select></td>' +
+          '<td><input type="text" class="entry-line-label" data-idx="' + idx + '" value="' + (line.label || "") + '" placeholder="Libellé de la ligne..." required style="width:100%; font-size:0.85rem; padding:4px 6px;" /></td>' +
+          '<td><input type="number" step="0.01" min="0" class="entry-line-debit font-mono-tabular" data-idx="' + idx + '" value="' + debitVal + '" placeholder="0,00" style="width:100%; font-size:0.85rem; text-align:right; padding:4px 6px;" /></td>' +
+          '<td><input type="number" step="0.01" min="0" class="entry-line-credit font-mono-tabular" data-idx="' + idx + '" value="' + creditVal + '" placeholder="0,00" style="width:100%; font-size:0.85rem; text-align:right; padding:4px 6px;" /></td>' +
+          '<td style="text-align:center;">' +
+            (entryLinesData.length > 2
+              ? '<button type="button" class="btn-secondary btn-remove-line" data-idx="' + idx + '" style="font-size:0.75rem; padding:2px 6px; color:var(--cn-danger);">✕</button>'
+              : '<span style="color:var(--cn-text-secondary); font-size:0.75rem;">—</span>') +
+          '</td>';
+
+        tbody.appendChild(tr);
+      });
+
+      // Écouteurs sur les champs de lignes
+      document.querySelectorAll(".entry-line-account").forEach((sel) => {
+        sel.addEventListener("change", (e) => {
+          const idx = Number(e.target.getAttribute("data-idx"));
+          entryLinesData[idx].generalAccountCode = e.target.value;
+          // Auto-remplissage du libellé si vide
+          if (!entryLinesData[idx].label && e.target.value) {
+            const acc = dossierAccountsCache.find((a) => a.accountNumber === e.target.value);
+            if (acc) {
+              const labelInput = document.querySelector('.entry-line-label[data-idx="' + idx + '"]');
+              if (labelInput && !labelInput.value) {
+                labelInput.value = acc.label;
+                entryLinesData[idx].label = acc.label;
+              }
+            }
+          }
+          recalculateEntryBalance();
+        });
+      });
+
+      document.querySelectorAll(".entry-line-label").forEach((inp) => {
+        inp.addEventListener("input", (e) => {
+          const idx = Number(e.target.getAttribute("data-idx"));
+          entryLinesData[idx].label = e.target.value;
+        });
+      });
+
+      document.querySelectorAll(".entry-line-debit").forEach((inp) => {
+        inp.addEventListener("input", (e) => {
+          const idx = Number(e.target.getAttribute("data-idx"));
+          const val = parseFloat(e.target.value);
+          entryLinesData[idx].debitMinor = !isNaN(val) && val >= 0 ? Math.round(val * 100) : 0;
+          // Si on saisit un débit, on réinitialise le crédit de la même ligne
+          if (entryLinesData[idx].debitMinor > 0) {
+            entryLinesData[idx].creditMinor = 0;
+            const creditInput = document.querySelector('.entry-line-credit[data-idx="' + idx + '"]');
+            if (creditInput) creditInput.value = "";
+          }
+          recalculateEntryBalance();
+        });
+      });
+
+      document.querySelectorAll(".entry-line-credit").forEach((inp) => {
+        inp.addEventListener("input", (e) => {
+          const idx = Number(e.target.getAttribute("data-idx"));
+          const val = parseFloat(e.target.value);
+          entryLinesData[idx].creditMinor = !isNaN(val) && val >= 0 ? Math.round(val * 100) : 0;
+          // Si on saisit un crédit, on réinitialise le débit de la même ligne
+          if (entryLinesData[idx].creditMinor > 0) {
+            entryLinesData[idx].debitMinor = 0;
+            const debitInput = document.querySelector('.entry-line-debit[data-idx="' + idx + '"]');
+            if (debitInput) debitInput.value = "";
+          }
+          recalculateEntryBalance();
+        });
+      });
+
+      document.querySelectorAll(".btn-remove-line").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-idx"));
+          entryLinesData.splice(idx, 1);
+          renderEntryLinesForm();
+        });
+      });
+
+      recalculateEntryBalance();
+    }
+
+    // Calcul en temps réel de l'équilibre Débit/Crédit
+    function recalculateEntryBalance() {
+      let sumDebit = 0;
+      let sumCredit = 0;
+      entryLinesData.forEach((l) => {
+        sumDebit += Number(l.debitMinor || 0);
+        sumCredit += Number(l.creditMinor || 0);
+      });
+
+      const debitEur = (sumDebit / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      const creditEur = (sumCredit / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+      const diffEur = (Math.abs(sumDebit - sumCredit) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+      document.getElementById("entry-live-total-debit").textContent = debitEur;
+      document.getElementById("entry-live-total-credit").textContent = creditEur;
+      document.getElementById("entry-live-diff").textContent = diffEur;
+
+      const badge = document.getElementById("entry-live-balance-badge");
+      const submitBtn = document.getElementById("btn-validate-entry-submit");
+
+      if (sumDebit === sumCredit && sumDebit > 0) {
+        badge.textContent = "✓ Écriture équilibrée (0,00 € d'écart)";
+        badge.style.background = "var(--cn-success-bg)";
+        badge.style.color = "var(--cn-success)";
+        badge.style.borderColor = "var(--cn-success)";
+        submitBtn.disabled = false;
+        submitBtn.title = "L'écriture est équilibrée. Cliquez pour valider.";
+      } else {
+        badge.textContent = "⚠ Écriture déséquilibrée (" + diffEur + " d'écart)";
+        badge.style.background = "var(--cn-warning-bg)";
+        badge.style.color = "var(--cn-warning)";
+        badge.style.borderColor = "var(--cn-warning)";
+        submitBtn.disabled = true;
+        submitBtn.title = "L'écriture doit être parfaitement équilibrée (Débit = Crédit > 0) pour être validée.";
+      }
+    }
+
+    // Ajout d'une ligne
+    document.getElementById("btn-add-entry-line").addEventListener("click", () => {
+      entryLinesData.push({ generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 });
+      renderEntryLinesForm();
+    });
+
+    // Réinitialisation / Annulation du formulaire
+    document.getElementById("btn-cancel-entry-form").addEventListener("click", () => {
+      document.getElementById("accounting-entry-form").reset();
+      entryLinesData = [
+        { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 },
+        { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 }
+      ];
+      renderEntryLinesForm();
+      if (subtabBtnJournalList) subtabBtnJournalList.click();
+    });
+
+    // Enregistrement en BROUILLON (DRAFT)
+    document.getElementById("btn-save-entry-draft").addEventListener("click", async () => {
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+
+      const journalCode = document.getElementById("entry-journal-select").value;
+      const entryDate = document.getElementById("entry-date-input").value;
+      const pieceNumber = document.getElementById("entry-piece-number-input").value.trim();
+      const label = document.getElementById("entry-label-input").value.trim();
+
+      if (!entryDate || !pieceNumber || !label) {
+        showFeedback("Veuillez renseigner la date, le numéro de pièce et le libellé de l'écriture.", true);
+        return;
+      }
+
+      const validLines = entryLinesData.filter((l) => l.generalAccountCode && (l.debitMinor > 0 || l.creditMinor > 0));
+      if (validLines.length < 2) {
+        showFeedback("Une écriture comptable doit comporter au moins 2 lignes renseignées.", true);
+        return;
+      }
+
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries", {
+          method: "POST",
+          body: JSON.stringify({
+            journalCode,
+            entryDate,
+            pieceNumber,
+            label,
+            status: "DRAFT",
+            lines: validLines.map((l, i) => ({
+              lineNumber: i + 1,
+              generalAccountCode: l.generalAccountCode,
+              label: l.label || label,
+              debitMinor: l.debitMinor,
+              creditMinor: l.creditMinor
+            }))
+          })
+        });
+
+        showFeedback("Écriture brouillon enregistrée avec succès (Pièce: " + res.entry.pieceNumber + ").");
+        document.getElementById("accounting-entry-form").reset();
+        entryLinesData = [
+          { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 },
+          { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 }
+        ];
+        if (subtabBtnJournalList) subtabBtnJournalList.click();
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Validation formelle soumise par formulaire
+    document.getElementById("accounting-entry-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+
+      const journalCode = document.getElementById("entry-journal-select").value;
+      const entryDate = document.getElementById("entry-date-input").value;
+      const pieceNumber = document.getElementById("entry-piece-number-input").value.trim();
+      const label = document.getElementById("entry-label-input").value.trim();
+
+      const validLines = entryLinesData.filter((l) => l.generalAccountCode && (l.debitMinor > 0 || l.creditMinor > 0));
+      if (validLines.length < 2) {
+        showFeedback("Une écriture comptable doit comporter au moins 2 lignes renseignées.", true);
+        return;
+      }
+
+      let totDeb = 0;
+      let totCred = 0;
+      validLines.forEach((l) => {
+        totDeb += l.debitMinor;
+        totCred += l.creditMinor;
+      });
+
+      if (totDeb !== totCred || totDeb <= 0) {
+        showFeedback("Impossible de valider : l'écriture n'est pas équilibrée (Total Débit ≠ Total Crédit).", true);
+        return;
+      }
+
+      try {
+        // 1. Créer l'écriture en brouillon
+        const createRes = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries", {
+          method: "POST",
+          body: JSON.stringify({
+            journalCode,
+            entryDate,
+            pieceNumber,
+            label,
+            status: "DRAFT",
+            lines: validLines.map((l, i) => ({
+              lineNumber: i + 1,
+              generalAccountCode: l.generalAccountCode,
+              label: l.label || label,
+              debitMinor: l.debitMinor,
+              creditMinor: l.creditMinor
+            }))
+          })
+        });
+
+        // 2. Valider formellement l'écriture
+        const entryId = createRes.entry.id;
+        const valRes = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries/" + entryId + "/validate", {
+          method: "POST"
+        });
+
+        showFeedback("Écriture comptable validée et verrouillée avec succès (Pièce: " + valRes.entry.pieceNumber + ").");
+        document.getElementById("accounting-entry-form").reset();
+        entryLinesData = [
+          { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 },
+          { generalAccountCode: "", label: "", debitMinor: 0, creditMinor: 0 }
+        ];
+        if (subtabBtnJournalList) subtabBtnJournalList.click();
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Validation d'une écriture existante depuis la liste
+    async function validateAccountingEntryAction(entryId) {
+      if (!window.confirm("Confirmez-vous la validation formelle de cette écriture ? Une fois validée, elle ne pourra plus être modifiée en place.")) {
+        return;
+      }
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries/" + entryId + "/validate", {
+          method: "POST"
+        });
+        showFeedback("Écriture validée avec succès (Pièce: " + res.entry.pieceNumber + ").");
+        await loadAccountingEntriesList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    // Extourne comptable d'une écriture validée
+    async function reverseAccountingEntryAction(entryId, pieceNumber) {
+      const reason = window.prompt("Motif de l'extourne comptable pour la pièce " + pieceNumber + " :");
+      if (reason === null) return;
+
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries/" + entryId + "/reverse", {
+          method: "POST",
+          body: JSON.stringify({ reversalReason: reason || undefined })
+        });
+        showFeedback("Extourne effectuée avec succès (Nouvelle pièce miroir : " + res.entry.pieceNumber + ").");
+        await loadAccountingEntriesList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    // Suppression d'un brouillon
+    async function deleteAccountingEntryAction(entryId) {
+      if (!window.confirm("Confirmez-vous la suppression de cette écriture brouillon ?")) {
+        return;
+      }
+      try {
+        await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries/" + entryId, {
+          method: "DELETE"
+        });
+        showFeedback("Écriture brouillon supprimée.");
+        await loadAccountingEntriesList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    // Détail complet dans la modale
+    async function openAccountingEntryDetail(entryId) {
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/accounting/entries/" + entryId);
+        const e = res.entry;
+
+        document.getElementById("entry-modal-title").textContent = "Pièce n° " + e.pieceNumber + " — " + e.label;
+        document.getElementById("entry-modal-subtitle").textContent = "Journal : " + e.journalCode + " (" + (e.journalLabel || "") + ") — Date : " + e.entryDate;
+
+        const metaEl = document.getElementById("entry-modal-meta");
+        let statusBadge = "";
+        if (e.status === "VALIDATED") {
+          statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Validée (VALIDATED)</span>';
+        } else if (e.status === "DRAFT") {
+          statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon (DRAFT)</span>';
+        } else if (e.status === "AI_SUGGESTION") {
+          statusBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">Suggestion IA</span>';
+        } else if (e.status === "REVERSED") {
+          statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Extournée (REVERSED)</span>';
+        }
+
+        metaEl.innerHTML =
+          '<div><strong>Statut :</strong> ' + statusBadge + '</div>' +
+          '<div><strong>Créée par :</strong> ' + (e.createdByName || "Système") + '</div>' +
+          '<div><strong>Validée par :</strong> ' + (e.validatedByName || "Non validée") + '</div>' +
+          '<div><strong>Horodatage validation :</strong> ' + (e.validatedAt ? new Date(e.validatedAt).toLocaleString("fr-FR") : "-") + '</div>' +
+          (e.reversalOfEntryId ? '<div style="grid-column:1/-1; color:var(--cn-warning);"><strong>Contre-passation :</strong> Cette écriture est l\'extourne de la pièce ' + e.reversalOfEntryId + '</div>' : '');
+
+        const linesTbody = document.getElementById("entry-modal-lines-tbody");
+        linesTbody.innerHTML = "";
+
+        const lines = e.lines || [];
+        lines.forEach((l) => {
+          const tr = document.createElement("tr");
+          const deb = l.debitMinor > 0 ? (l.debitMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €" : "-";
+          const cred = l.creditMinor > 0 ? (l.creditMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €" : "-";
+
+          tr.innerHTML =
+            '<td class="font-mono-tabular">' + l.lineNumber + '</td>' +
+            '<td class="font-mono-tabular"><strong>' + l.generalAccountCode + '</strong></td>' +
+            '<td>' + (l.generalAccountLabel || "-") + '</td>' +
+            '<td>' + l.label + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + deb + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + cred + '</td>';
+
+          linesTbody.appendChild(tr);
+        });
+
+        document.getElementById("entry-modal-total-debit").textContent = (e.totalDebitMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+        document.getElementById("entry-modal-total-credit").textContent = (e.totalCreditMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+        // Boutons dans la modale
+        const actionsEl = document.getElementById("entry-modal-actions");
+        actionsEl.innerHTML = "";
+        if ((e.status === "DRAFT" || e.status === "AI_SUGGESTION") && e.isBalanced) {
+          const valBtn = document.createElement("button");
+          valBtn.type = "button";
+          valBtn.className = "btn-primary";
+          valBtn.textContent = "Valider formellement l'écriture";
+          valBtn.addEventListener("click", async () => {
+            document.getElementById("entry-detail-modal").classList.add("hidden");
+            await validateAccountingEntryAction(e.id);
+          });
+          actionsEl.appendChild(valBtn);
+        } else if (e.status === "VALIDATED") {
+          const revBtn = document.createElement("button");
+          revBtn.type = "button";
+          revBtn.className = "btn-secondary";
+          revBtn.style.color = "var(--cn-warning)";
+          revBtn.textContent = "Extourner cette écriture";
+          revBtn.addEventListener("click", async () => {
+            document.getElementById("entry-detail-modal").classList.add("hidden");
+            await reverseAccountingEntryAction(e.id, e.pieceNumber);
+          });
+          actionsEl.appendChild(revBtn);
+        }
+
+        document.getElementById("entry-detail-modal").classList.remove("hidden");
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    document.getElementById("entry-modal-close-btn").addEventListener("click", () => {
+      document.getElementById("entry-detail-modal").classList.add("hidden");
+    });
 
     bootstrapAuthenticatedApp();
   </script>

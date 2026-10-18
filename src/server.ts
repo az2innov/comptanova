@@ -59,6 +59,17 @@ import {
 } from "./services/dashboard-service.js";
 import { defaultDocumentStorage } from "./services/file-security.js";
 import {
+  getDossierAccounts,
+  getDossierJournals,
+  createAccountingEntry,
+  updateDraftAccountingEntry,
+  validateAccountingEntry,
+  reverseAccountingEntry,
+  deleteDraftAccountingEntry,
+  getAccountingEntryDetails,
+  listAccountingEntries,
+} from "./services/accounting-service.js";
+import {
   listAuditLogsForOrganization,
   verifyAuditChainIntegrity,
 } from "./audit/audit-service.js";
@@ -1166,6 +1177,183 @@ export function createAppServer(
               "X-Content-Type-Options": "nosniff",
             });
             res.end(xml);
+            return;
+          }
+
+          // Module 5 : Saisie comptable et journaux
+          // 1. Récupération des comptes du plan comptable (PCG) : GET /api/organizations/:orgId/dossiers/:dossierId/accounting/accounts
+          if (method === "GET" && dossierAction === "accounting/accounts") {
+            const accountClass = parsedUrl.searchParams.get("class")
+              ? Number(parsedUrl.searchParams.get("class"))
+              : undefined;
+            const search = parsedUrl.searchParams.get("search") || undefined;
+            const accounts = getDossierAccounts({
+              session,
+              organizationId: orgId,
+              dossierId,
+              accountClass,
+              search,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { accounts });
+            return;
+          }
+
+          // 2. Récupération des journaux autorisés : GET /api/organizations/:orgId/dossiers/:dossierId/accounting/journals
+          if (method === "GET" && dossierAction === "accounting/journals") {
+            const journals = getDossierJournals({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { journals });
+            return;
+          }
+
+          // 3. Liste des écritures comptables : GET /api/organizations/:orgId/dossiers/:dossierId/accounting/entries
+          if (method === "GET" && dossierAction === "accounting/entries") {
+            const journalCode = parsedUrl.searchParams.get("journalCode") || undefined;
+            const status = parsedUrl.searchParams.get("status") || undefined;
+            const accountCode = parsedUrl.searchParams.get("accountCode") || undefined;
+            const startDate = parsedUrl.searchParams.get("startDate") || undefined;
+            const endDate = parsedUrl.searchParams.get("endDate") || undefined;
+            const search = parsedUrl.searchParams.get("search") || undefined;
+            const limit = parsedUrl.searchParams.get("limit")
+              ? Number(parsedUrl.searchParams.get("limit"))
+              : undefined;
+            const offset = parsedUrl.searchParams.get("offset")
+              ? Number(parsedUrl.searchParams.get("offset"))
+              : undefined;
+
+            const result = listAccountingEntries({
+              session,
+              organizationId: orgId,
+              dossierId,
+              journalCode,
+              status,
+              accountCode,
+              startDate,
+              endDate,
+              search,
+              limit,
+              offset,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 4. Création d'une écriture comptable : POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries
+          if (method === "POST" && dossierAction === "accounting/entries") {
+            const body = await readJsonBody(req);
+            const entry = createAccountingEntry({
+              session,
+              organizationId: orgId,
+              dossierId,
+              journalCode: String(body.journalCode || ""),
+              entryDate: String(body.entryDate || ""),
+              pieceNumber: String(body.pieceNumber || ""),
+              label: String(body.label || ""),
+              status: body.status === "AI_SUGGESTION" ? "AI_SUGGESTION" : "DRAFT",
+              currency: body.currency ? String(body.currency) : undefined,
+              lines: Array.isArray(body.lines) ? body.lines : [],
+              documentId: body.documentId ? String(body.documentId) : undefined,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 201, { entry });
+            return;
+          }
+
+          // 5. Validation formelle d'une écriture : POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId/validate
+          const entryValidateMatch = dossierAction.match(/^accounting\/entries\/([^/]+)\/validate$/);
+          if (method === "POST" && entryValidateMatch) {
+            const entryId = decodeURIComponent(entryValidateMatch[1]!);
+            const entry = validateAccountingEntry({
+              session,
+              organizationId: orgId,
+              dossierId,
+              entryId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { entry });
+            return;
+          }
+
+          // 6. Extourne comptable : POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId/reverse
+          const entryReverseMatch = dossierAction.match(/^accounting\/entries\/([^/]+)\/reverse$/);
+          if (method === "POST" && entryReverseMatch) {
+            const entryId = decodeURIComponent(entryReverseMatch[1]!);
+            const body = await readJsonBody(req);
+            const entry = reverseAccountingEntry({
+              session,
+              organizationId: orgId,
+              dossierId,
+              entryId,
+              reversalDate: body.reversalDate ? String(body.reversalDate) : undefined,
+              reversalReason: body.reversalReason ? String(body.reversalReason) : undefined,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 201, { entry });
+            return;
+          }
+
+          // 7. Détail d'une écriture comptable : GET /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId
+          const entryDetailMatch = dossierAction.match(/^accounting\/entries\/([^/]+)$/);
+          if (method === "GET" && entryDetailMatch) {
+            const entryId = decodeURIComponent(entryDetailMatch[1]!);
+            const entry = getAccountingEntryDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              entryId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { entry });
+            return;
+          }
+
+          // 8. Mise à jour d'un brouillon : PATCH ou PUT /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId
+          if ((method === "PATCH" || method === "PUT") && entryDetailMatch) {
+            const entryId = decodeURIComponent(entryDetailMatch[1]!);
+            const body = await readJsonBody(req);
+            const entry = updateDraftAccountingEntry({
+              session,
+              organizationId: orgId,
+              dossierId,
+              entryId,
+              journalCode: body.journalCode ? String(body.journalCode) : undefined,
+              entryDate: body.entryDate ? String(body.entryDate) : undefined,
+              pieceNumber: body.pieceNumber ? String(body.pieceNumber) : undefined,
+              label: body.label ? String(body.label) : undefined,
+              currency: body.currency ? String(body.currency) : undefined,
+              lines: Array.isArray(body.lines) ? body.lines : [],
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { entry });
+            return;
+          }
+
+          // 9. Suppression d'un brouillon : DELETE /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId
+          if (method === "DELETE" && entryDetailMatch) {
+            const entryId = decodeURIComponent(entryDetailMatch[1]!);
+            const result = deleteDraftAccountingEntry({
+              session,
+              organizationId: orgId,
+              dossierId,
+              entryId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
             return;
           }
         }

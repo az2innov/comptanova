@@ -34,7 +34,7 @@
 | **Module 1 : Gestion des dossiers (§13)** | [`src/services/tenant-service.ts`](../src/services/tenant-service.ts)<br>[`src/server.ts`](../src/server.ts) | **`PARTIELLEMENT IMPLÉMENTÉ`** | Création et liste filtrée opérationnelles. **Manquent** : modification d'un dossier existant (`PUT / PATCH`), gestion UI/API des affectations granulaires d'utilisateurs (`assignUserToDossier` existe en service mais n'est pas exposé en route HTTP ni dans l'UI), archivage/désactivation contrôlée et historique des actions par dossier. |
 | **Module 2 : Documents et IA (§14)** | [`src/services/tenant-service.ts`](../src/services/tenant-service.ts)<br>[`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts) | **`PARTIELLEMENT IMPLÉMENTÉ` & `SIMULÉ`** | `ingestDocumentIntoDossier()` calcule le `SHA-256`, détecte les doublons et appelle `DeterministicMockAiAdapter` (`SIMULÉ` explicite), mais : (1) le binaire n'est pas encore écrit sur disque dans `./storage/private-documents`, (2) `DeterministicMockAiAdapter` renvoie des valeurs fixes au lieu d'analyser le texte du document téléversé, (3) aucune route HTTP ni écran de téléversement, de prévisualisation côte-à-côte, de correction manuelle ni de validation humaine n'est encore câblé. |
 | **Module 3 : Import des listings de factures CSV/Excel (§15)** | Table `import_batches` & `invoices` | **`NON IMPLÉMENTÉ`** | Les tables SQL `import_batches` et `invoices` existent, mais le modèle téléchargeable, l'analyseur CSV/TSV, le mapping de colonnes, la prévisualisation, la détection de doublons, le rapport d'erreurs par ligne et l'import transactionnel (factures émises, reçues et avoirs) restent à développer. |
-| **Module 4 : Saisie comptable (§16)** | [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts) | **`PARTIELLEMENT IMPLÉMENTÉ`** | Les tables `chart_of_accounts`, `accounting_journals`, `accounting_entries`, `accounting_entry_lines` et la fonction `recordMultiLineAccountingEntry()` existent et sont testées. **Manquent** : l'initialisation automatique du PCG et des journaux du dossier, les routes API, la grille UI de saisie rapide multi-lignes au clavier, les modèles/duplication, la validation humaine (`VALIDATED`) et la procédure d'extourne (`REVERSED`) interdisant toute modification silencieuse d'une écriture validée. |
+| **Module 4 : Saisie comptable (§16)** | [`src/services/accounting-service.ts`](../src/services/accounting-service.ts)<br>[`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts) | **`TERMINÉ ET TESTÉ`** | Livré au Lot 1.5 : partie double stricte multi-lignes, PCG ANC, 5 journaux officiels (VE, AC, BQ, OD, AN), validation humaine explicite (VALIDATE_ACCOUNTING), inaltérabilité des écritures validées, extourne symétrique (REVERSED) et tests SQLite + PostgreSQL 16. |
 | **Module 5 : Import et rapprochement bancaire (§17)** | Tables `bank_transactions` & `reconciliation_links` | **`NON IMPLÉMENTÉ`** | Les tables SQL existent et sont testées, mais le parseur CSV/OFX bancaire, la déduplication (`external_dedup_hash`), le moteur de suggestion de rapprochement, le traitement des paiements partiels, le marquage des opérations sans justificatif et l'interface de rapprochement restent à développer. |
 | **Module 6 : Contrôles comptables et anomalies (§18)** | [`src/rules/deterministic-engine.ts`](../src/rules/deterministic-engine.ts) & table `anomalies` | **`PARTIELLEMENT IMPLÉMENTÉ`** | Les contrôles $\text{HT}+\text{TVA}=\text{TTC}$, validité du taux de TVA et équilibre Débit/Crédit existent en fonctions pures. **Manquent** : les 7 autres règles déterministes (ruptures de séquence, doublons de factures, factures impayées échues, incohérences facture/paiement, dépenses sans justificatif, opérations bancaires non rapprochées, écarts listing/document/écriture), la persistance dans la table `anomalies` et l'écran de suivi/résolution. |
 | **Module 7 : Simulations indicatives (§19)** | [`src/rules/deterministic-engine.ts`](../src/rules/deterministic-engine.ts)<br>[`src/server.ts`](../src/server.ts) | **`PARTIELLEMENT IMPLÉMENTÉ`** | La route `POST /api/organizations/:orgId/simulate` existe pour `VAT_SUMMARY` et `SOCIAL_CONTRIBUTIONS`, mais les résultats ne sont pas persistés dans `simulations_history`, les simulations d'impôt et d'**impact indicatif d'une dépense** (`EXPENSE_IMPACT`) ne sont pas implémentées, et l'écran UI de simulation n'existe pas encore. |
@@ -238,19 +238,26 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
    - 100% des indicateurs proviennent d'enregistrements SQL réels persistés.
    - Les totaux financiers concordent au centime près avec la somme des lignes de factures et règlements.
    - Les 5 états UI (chargement, données disponibles, état vide pédagogique, erreur, accès interdit) sont gérés.
-   - Tests automatisés couvrant les calculs, les filtres, l'isolation et les permissions.
-9. **Tests UX/UI** :
-   - Grille de saisie au clavier dans l'onglet `Saisie comptable`, calcul dynamique de l'écart Débit/Crédit, sélecteur de modèles, badge `AI_SUGGESTION` vs `DRAFT` vs `VALIDATED` vs `REVERSED`, et modale de confirmation d'extourne avec motif.
-10. **Critères d'acceptation** :
-    - Le Module 4 passe au statut **`TERMINÉ ET TESTÉ`**.
-11. **Risques et limitations** :
-    - La clôture définitive d'exercice fiscal annuel avec génération automatique des à-nouveaux (`AN`) complets relève de la Phase 2 ; le journal `AN` est toutefois disponible pour la saisie du bilan d'ouverture.
-12. **Conditions de passage au Lot 1.5** :
-    - `npm run typecheck && npm test` à 100 % (SQLite + PostgreSQL 16).
+   - Tests automatisés couvrant les calculs, les filtres, l'isolation et les permissions (11 sous-tests dans `src/tests/phase1-lot1-4.test.ts`).
+   - Le Module 2 passe au statut **`TERMINÉ ET TESTÉ`** (Commit `f65fae8`).
 
 ---
 
-### LOT 1.5 — Modules 5 & 6 : Import Bancaire (CSV & OFX), Rapprochement Bancaire Assisté/Manuel et Moteur de Contrôles Comptables & Anomalies (10 Règles)
+### LOT 1.5 — Module 5 : Saisie Comptable et Journaux (Partie Double, PCG Français, 5 Journaux VE/AC/BQ/OD/AN, Validation Humaine Inaltérable et Extourne Contrôlée)
+
+1. **Objectif** : Implémenter intégralement la saisie comptable en partie double (§16), le respect strict du Plan Comptable Général (PCG), les 5 journaux officiels français (`VE`, `AC`, `BQ`, `OD`, `AN`), le workflow de brouillons/suggestions IA, la validation formelle avec contrôle RBAC `VALIDATE_ACCOUNTING`, l'inaltérabilité des écritures validées et la procédure d'extourne symétrique avec liaison bidirectionnelle.
+2. **Périmètre fonctionnel** :
+   - **Partie double stricte en centimes** : Invariant absolu $\sum \text{Débit} = \sum \text{Crédit} > 0$ en unités mineures entières (aucun flottant).
+   - **PCG et 5 journaux officiels** : Validation de l'existence des comptes dans le plan du dossier client (`chart_of_accounts`) ; prise en charge complète des 5 journaux `VE` (Ventes), `AC` (Achats), `BQ` (Banque), `OD` (Opérations Diverses), `AN` (À-Nouveau / Réouverture).
+   - **Statuts d'écriture et cycle de vie** : `DRAFT`, `AI_SUGGESTION`, `VALIDATED`, `REVERSED`.
+   - **Validation humaine formelle** : Contrôle RBAC strict côté serveur (`VALIDATE_ACCOUNTING` / `can_validate_accounting`), enregistrement du valideur (`validated_by_user_id`) et de l'horodatage (`validated_at`).
+   - **Inaltérabilité & Extourne contrôlée** : Blocage absolu des modifications et suppressions sur écritures validées ; annulation exclusive par extourne comptable symétrique créant une contre-écriture liée (`reversal_of_entry_id`) avec statut `REVERSED` sur l'écriture d'origine.
+   - **Interface utilisateur** : Livre-journal avec filtres multi-critères, synthèse financière et contrôle de balance, formulaire de saisie au kilomètre dynamique avec équilibre en temps réel, zéro couleur hexadécimale codée en dur.
+3. **Statut** : **`TERMINÉ ET TESTÉ`** (Suite `src/tests/phase1-lot1-5.test.ts` à 11 sous-tests, 100% de réussite sur SQLite et PostgreSQL 16).
+
+---
+
+### LOT 1.6 — Modules 5 & 6 : Import Bancaire (CSV & OFX), Rapprochement Bancaire Assisté/Manuel et Moteur de Contrôles Comptables & Anomalies (10 Règles)
 
 1. **Objectif** : Implémenter de bout en bout le **Module 5 (Import et rapprochement bancaire, §17)** et le **Module 6 (Contrôles comptables et anomalies, §18)**.
 2. **Périmètre** :

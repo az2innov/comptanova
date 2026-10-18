@@ -417,8 +417,12 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
     validated_by_user_id TEXT REFERENCES users(id),
     validated_at TEXT,
     reversal_of_entry_id TEXT REFERENCES accounting_entries(id),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE INDEX IF NOT EXISTS idx_entries_org_dossier_journal_date ON accounting_entries(organization_id, dossier_id, journal_code, entry_date);
+  CREATE INDEX IF NOT EXISTS idx_entries_reversal_of ON accounting_entries(reversal_of_entry_id);
 
   CREATE TABLE IF NOT EXISTS simulations_history (
     id TEXT PRIMARY KEY,

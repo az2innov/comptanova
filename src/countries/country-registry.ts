@@ -183,8 +183,10 @@ export const INITIAL_COUNTRY_CONFIGURATIONS: CountryConfigurationVersion[] = [
     standardJournals: [
       { code: "AC", label: "Journal des Achats" },
       { code: "VT", label: "Journal des Ventes" },
+      { code: "VE", label: "Journal des Ventes (VE)" },
       { code: "BQ", label: "Journal de Banque" },
       { code: "OD", label: "Opérations Diverses" },
+      { code: "AN", label: "À-Nouveaux (AN)" },
     ],
     vatRates: [
       {
@@ -298,6 +300,7 @@ export const INITIAL_COUNTRY_CONFIGURATIONS: CountryConfigurationVersion[] = [
       { code: "AN", label: "À-Nouveaux (AN)" },
       { code: "AC", label: "Journal des Achats (Alias AC)" },
       { code: "VT", label: "Journal des Ventes (Alias VT)" },
+      { code: "VE", label: "Journal des Ventes (VE)" },
     ],
     vatRates: [
       {

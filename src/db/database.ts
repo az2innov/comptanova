@@ -753,6 +753,17 @@ export const MIGRATIONS: MigrationDefinition[] = [
       ALTER TABLE invoices ADD COLUMN finalized_by_user_id TEXT REFERENCES users(id);
     `,
   },
+  {
+    version: "008_phase1_lot1_5_accounting_entries",
+    description:
+      "Lot 1.5 (Module 5 — Saisie comptable et journaux) : Ajout de updated_at sur accounting_entries, index d'interrogation multi-critères par journal et date, et index sur reversal_of_entry_id.",
+    upSql: `
+      ALTER TABLE accounting_entries ADD COLUMN updated_at TEXT;
+      UPDATE accounting_entries SET updated_at = created_at WHERE updated_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_entries_org_dossier_journal_date ON accounting_entries(organization_id, dossier_id, journal_code, entry_date);
+      CREATE INDEX IF NOT EXISTS idx_entries_reversal_of ON accounting_entries(reversal_of_entry_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync = getDatabase()): {

@@ -298,4 +298,70 @@
   - Le Lot 1.4 est finalisé, persistant et vérifié à 100%.
   - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.4 en attente de la revue et de l'autorisation explicite de l'utilisateur avant d'engager le Lot 1.5.
 
+---
+
+## ACT-0016 — 2026-10-18T22:10:00+01:00 — Implémentation du Lot 1.5 : Module 5 — Saisie Comptable et Journaux (Partie Double, PCG Français, 5 Journaux VE/AC/BQ/OD/AN, Validation Humaine Inaltérable et Extourne Contrôlée)
+- **Objectif** : Implémenter intégralement le Module 5 (Saisie comptable et journaux) de la Phase 1 conformément au cahier des charges (§16), aux directives de pilotage, et aux conditions d'autorisation de l'utilisateur (partie double stricte, équilibre Débit/Crédit en centimes, Plan Comptable Général ANC, 5 journaux officiels français VE, AC, BQ, OD, AN, validation humaine explicite avec contrôle RBAC VALIDATE_ACCOUNTING, inaltérabilité des écritures validées, extourne comptable symétrique avec liaison bidirectionnelle, tests automatisés SQLite et PostgreSQL 16).
+- **Périmètre & Fichiers modifiés** :
+  1. `src/countries/country-registry.ts` :
+     - Ajout officiel du journal `VE` (Journal des Ventes) dans les profils `FR-2025` et `FR-2026`, complétant les 5 journaux standards : `VE`, `AC`, `BQ`, `OD`, `AN`.
+  2. `src/db/database.ts` & `src/db/phase1-readiness-migration.ts` :
+     - Ajout de la migration non destructive `008_phase1_lot1_5_accounting_entries` :
+       - Ajout de la colonne `updated_at TEXT` sur `accounting_entries` (initialisée à `created_at` pour les écritures existantes).
+       - Ajout de l'index multi-critères `idx_entries_org_dossier_journal_date` sur `(organization_id, dossier_id, journal_code, entry_date)`.
+       - Ajout de l'index `idx_entries_reversal_of` sur `reversal_of_entry_id`.
+       - Alignement complet du schéma PostgreSQL 16 dans `POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL`.
+  3. `src/services/accounting-service.ts` *(NOUVEAU)* : Service métier complet comprenant :
+     - `getDossierAccounts` : Consultation filtrée des comptes du PCG du dossier client (par classe ou par recherche textuelle).
+     - `getDossierJournals` : Consultation des journaux autorisés du dossier (`VE`, `AC`, `BQ`, `OD`, `AN`).
+     - `createAccountingEntry` : Création transactionnelle d'une écriture multi-lignes en statut `DRAFT` ou `AI_SUGGESTION` avec contrôles stricts (au moins 2 lignes, montants en entiers stricts, pas de débit et crédit simultanés sur une même ligne, comptes existants dans le PCG du dossier).
+     - `updateDraftAccountingEntry` : Modification en place d'un brouillon existant avec recalcul des totaux et remplacement atomique des lignes ; rejet immédiat si l'écriture est déjà `VALIDATED`, `EXPORTED` ou `REVERSED` (règle d'inaltérabilité).
+     - `validateAccountingEntry` : Procédure formelle de validation humaine : vérification stricte de la permission RBAC `VALIDATE_ACCOUNTING` (`can_validate_accounting`), contrôle absolu de l'équilibre Débit/Crédit (`totalDebitMinor === totalCreditMinor > 0`), verrouillage au statut `VALIDATED` avec horodatage et identifiant du valideur.
+     - `reverseAccountingEntry` : Extourne comptable contrôlée conforme aux normes françaises (génération d'une écriture miroir symétrique inversant rigoureusement Débit et Crédit, attribution du préfixe `EXT-`, marquage de l'écriture d'origine en `REVERSED`, liaison bidirectionnelle inaltérable `reversal_of_entry_id`, interdiction de ré-extourne).
+     - `deleteDraftAccountingEntry` : Suppression sécurisée réservée aux écritures brouillons (interdite sur les écritures validées).
+     - `getAccountingEntryDetails` : Consultation détaillée d'une pièce comptable avec ses lignes ordonnées, libellés PCG et traçabilité des utilisateurs.
+     - `listAccountingEntries` : Livre-Journal multi-critères (filtres par journal, statut, dates, compte, recherche texte) avec pagination et calcul exact des totaux Débit/Crédit et du solde général.
+  4. `src/server.ts` :
+     - Exposition des 9 endpoints REST sécurisés :
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/accounting/accounts`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/accounting/journals`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/accounting/entries`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId`
+       - `PATCH /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId/validate`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId/reverse`
+       - `DELETE /api/organizations/:orgId/dossiers/:dossierId/accounting/entries/:entryId`
+  5. `src/ui/app-view.ts` :
+     - Remplacement complet du placeholder `#tab-journal` par l'interface du Module 5 :
+       - Bannière informative rappelant les principes comptables et les invariants LPF/FEC.
+       - Synthèse financière du journal : compteurs en direct des écritures, total Débit (€), total Crédit (€), et statut de balance générale.
+       - Sous-onglets internes : *Consultation des écritures & Journaux* vs *+ Nouvelle saisie au kilomètre*.
+       - Vue Livre-Journal : filtres interactifs par journal (`VE`, `AC`, `BQ`, `OD`, `AN`), par statut (`DRAFT`, `AI_SUGGESTION`, `VALIDATED`, `REVERSED`), recherche libre, tableau des écritures avec badges de statut et d'équilibre, boutons d'action (Détail, Valider, Extourner, Supprimer).
+       - Vue Saisie au kilomètre : formulaire d'entête (journal, date, n° pièce, libellé), grille multi-lignes dynamique avec ajout/suppression de lignes, sélecteur des comptes PCG du dossier avec libellé automatique, barre d'équilibre temps réel (Débit, Crédit, Écart, badge vert/orange), bouton de validation désactivé tant que l'écriture est déséquilibrée.
+       - Modale de consultation du détail de la pièce comptable et de ses lignes.
+       - Gestion des 5 états d'interface et conformité stricte au Design System officiel (zéro couleur hexadécimale codée en dur).
+  6. `src/tests/phase1-lot1-5.test.ts` *(NOUVEAU)* :
+     - 11 sous-tests automatisés exhaustifs couvrant : PCG et journaux, création de brouillon en centimes, rejet d'écritures mal formées, blocage de validation sur écriture déséquilibrée, validation humaine avec RBAC `VALIDATE_ACCOUNTING`, inaltérabilité des écritures validées, extourne comptable symétrique, filtres multi-critères du journal, étanchéité multi-tenant absolue, exécution réelle sur instance PostgreSQL 16 locale, et intégration complète de l'API REST.
+  7. `src/tests/phase1-readiness-and-postgres.test.ts` :
+     - Actualisation de la liste des migrations attendues (inclusion de la migration `008`).
+- **Sauvegarde & Intégrité** :
+  - Sauvegarde de la base de référence avant travaux : `data/backups/app.db.pre-lot-1.5.bak` (SHA-256 : `047bf2a5758b8569b2b45b05cb0c783bf5a5c1cd804d0ed156e0c0503e607f80`).
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **68/68 tests passants** (8 suites de tests, 0 échec, durée `2429.41 ms`).
+  - Validation complète sur les 8 suites :
+    1. Extension scope international (8/8 pass)
+    2. Phase 0 fondations & sécurité (9/9 pass)
+    3. Phase 1 Lot 1.1 layout/design/dossiers (4/4 pass)
+    4. Phase 1 Lot 1.2 collecte documentaire (8/8 pass)
+    5. Phase 1 Lot 1.3 Module 4 facturation/devis (12/12 pass)
+    6. Phase 1 Lot 1.4 Module 2 tableaux de bord & pilotage (11/11 pass)
+    7. Phase 1 Lot 1.5 Module 5 saisie comptable & journaux (11/11 pass)
+    8. Audit complémentaire Phase 0 & PostgreSQL 16 réel (5/5 pass)
+- **Réserves / Prochaines étapes** :
+  - Le Lot 1.5 est finalisé, persistant et vérifié à 100%.
+  - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.5 en attente de la revue et de l'autorisation explicite de l'utilisateur avant d'engager le Lot 1.6 (Banque, rapprochement et anomalies).
+
+
 

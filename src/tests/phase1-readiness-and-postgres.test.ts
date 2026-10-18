@@ -140,6 +140,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
           "005_phase1_lot1_1_dossier_metadata",
           "006_phase1_lot1_2_document_lifecycle",
           "007_phase1_lot1_3_quotes_and_invoicing",
+          "008_phase1_lot1_5_accounting_entries",
         ]
       );
 
