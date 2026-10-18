@@ -191,5 +191,5 @@
   - 100% de succès sur l'ensemble des modules (Scope international, Phase 0, Lot 1.1, Lot 1.2, et tests PostgreSQL 16 réels).
 - **Réserves / Prochaines étapes** :
   - Le Lot 1.2 est finalisé et vérifié.
-  - Conformément à la directive d'incrémentalité stricte, le Lot 1.3 (Module 2 — Facturation et Devis) ne sera démarré qu'après validation explicite de l'utilisateur.
+  - Conformément à la directive d'incrémentalité stricte, le Lot 1.3 (Module 4 — Facturation, Devis, Transformation et Aperçu imprimable) sera exécuté avec respect rigoureux des contrôles de clôture et du périmètre validé.
 

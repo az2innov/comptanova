@@ -157,47 +157,54 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
 
 ---
 
-### LOT 1.3 — Module 3 : Import Transactionnel et Idempotent des Listings de Factures (CSV / Compatible Excel)
+### LOT 1.3 — Module 4 : Facturation, Devis, Transformation contrôlée et Aperçu imprimable (Mentions LPF, Calculs monétaires & Spécifications Factur-X / PDP distinctes)
 
-1. **Objectif** : Implémenter le **Module 3 (§15)** permettant d'importer de manière transactionnelle et répétable des listings de factures émises, factures reçues et avoirs, avec modèle téléchargeable, prévisualisation, correspondance des colonnes, rapport d'erreurs détaillé par ligne et détection des doublons.
-2. **Périmètre** :
-   - Téléchargement d'un modèle CSV/TSV normalisé (`GET /api/organizations/:orgId/dossiers/:dossierId/imports/invoices-template`).
-   - Étape 1 — **Analyse & Prévisualisation (`PREVIEW_PENDING_VALIDATION`)** :
-     - Analyse du fichier CSV (séparateurs `,` ou `;` compatibles Excel français, gestion des guillemets et de l'encodage UTF-8/BOM).
-     - Mapping dynamique des colonnes (numéro de facture, sens `ISSUED`/`RECEIVED`/`CREDIT_NOTE`, tiers, date d'émission, date d'échéance, HT, TVA, TTC, taux TVA, devise) et détection des colonnes obligatoires manquantes.
-     - Validation ligne par ligne (dates ISO ou `DD/MM/YYYY`, montants exacts en unités mineures y compris négatifs pour les avoirs, cohérence $\text{HT}+\text{TVA}=\text{TTC}$, devise autorisée).
-     - Détection des doublons : (a) empreinte `file_sha256_checksum` du fichier dans `import_batches`, (b) doublons internes au fichier, (c) factures déjà présentes dans `invoices` pour ce dossier.
-     - Enregistrement du lot dans `import_batches` à l'état `PREVIEW_PENDING_VALIDATION` avec `errors_report_json`.
-   - Étape 2 — **Confirmation Transactionnelle (`COMMITTED`) ou Annulation** :
-     - L'utilisateur inspecte le rapport de prévisualisation, peut annuler le lot ou confirmer l'import.
-     - Lors de la confirmation, insertion atomique (`BEGIN TRANSACTION ... COMMIT`) dans `invoices` (et création automatique des tiers manquants dans `third_parties`) ; tout fichier comportant des erreurs bloquantes non résolues est rejeté sans import partiel non maîtrisé.
-   - Consultation de la liste des **Factures et dépenses** (émises, reçues, avoirs, statuts de paiement et de validation) et de l'historique des lots d'import.
-3. **Dépendances** : Lots 1.1 & 1.2.
+1. **Objectif** : Implémenter intégralement le **Module 4 (Facturation et Devis, §12)** : création et édition de devis et factures, transformation contrôlée d'un devis en facture (sans duplication ni perte de traçabilité), gestion des tiers, lignes, quantités, prix unitaires, remises et taxes, numérotation chronologique continue et infalsifiable, gestion des règlements, mentions légales obligatoires selon profil client (LPF), aperçu imprimable, et cadrage rigoureux en 3 niveaux de la facturation électronique (Facture classique, Factur-X XML hybride, et connectivité PDP en périmètre distinct).
+2. **Périmètre fonctionnel** :
+   - **Devis (`quotes`)** : Création, modification, lignes d'articles/prestations (quantité, prix unitaire HT en centimes, remise, taux de TVA, montant HT, TVA, TTC calculés exactement sans flottants), suivi des statuts (`DRAFT`, `SENT`, `ACCEPTED`, `REJECTED`, `EXPIRED`, `CONVERTED`).
+   - **Factures de vente (`invoices` émis - direction `ISSUED`) & Avoirs (`CREDIT_NOTE`)** :
+     - Création directe ou par conversion de devis.
+     - Suivi des statuts : `DRAFT`, `FINALIZED` (émise / verrouillée), `PAID` (soldée), `PARTIALLY_PAID`, `CANCELLED` (annulée par avoir).
+   - **Transformation contrôlée Devis $\rightarrow$ Facture** :
+     - Conversion atomique : création d'une nouvelle facture liée (`origin_quote_id`), bascule du devis à l'état `CONVERTED` (`converted_to_invoice_id`, `converted_at`).
+     - Interdiction stricte de re-transformer un devis déjà converti sans action ou alerte explicite.
+   - **Numérotation continue et traçable** :
+     - Numérotation propre au dossier et chronologique (ex: `FAC-2026-0001`, `DEV-2026-0001`, `AV-2026-0001`).
+     - Aucun trou de numérotation toléré sur les factures émises (`FINALIZED`).
+     - Interdiction de suppression physique ou de modification d'une facture finalisée : toute correction s'effectue obligatoirement par émission d'un **Avoir (`CREDIT_NOTE`)** traçable.
+   - **Gestion des règlements** :
+     - Enregistrement des paiements (date, mode de règlement, référence, montant payé partiel ou total, solde restant dû).
+   - **Mentions légales obligatoires françaises (Livre des Procédures Fiscales & Code de Commerce)** :
+     - Mentions de l'émetteur : Raison sociale, forme juridique, SIREN/SIRET, RCS/RM, TVA intracommunautaire, adresse du siège.
+     - Mentions du client : Nom/raison sociale, adresse de facturation, SIREN/TVA intracommunautaire si B2B.
+     - Mentions fiscales : Taux de TVA ventilés, mention d'exonération ou de franchise si applicable (« *TVA non applicable, art. 293 B du CGI* » pour micro-entreprises).
+     - Conditions de règlement : Date d'échéance, pénalités de retard (taux légal BCE + 10 points ou 3 fois le taux d'intérêt légal), et indemnité forfaitaire pour frais de recouvrement de 40 € (B2B, art. D441-5 C. com.).
+   - **Aperçu imprimable** :
+     - Rendu HTML propre pour impression (format A4 avec styles CSS d'impression `@media print`), récapitulatif complet de TVA par taux, et mentions légales obligatoires.
+   - **Architecture Facturation Électronique (Factur-X / PDP) en 3 niveaux stricts** :
+     - **Niveau 1** : Facture classique générée par ComptaNova (PDF / visualisation HTML imprimable avec mentions LPF obligatoires).
+     - **Niveau 2** : Fichier Factur-X hybride (génération du flux XML conforme au standard Factur-X / ZUGFeRD sous profil `MINIMUM`, `BASIC` ou `EN16931`), testé techniquement et validable structurellement.
+     - **Niveau 3** : Transmission et réception via une Plateforme de Dématérialisation Partenaire (PDP) ou Portail Public de Facturation (PPF) : ComptaNova n'étant PAS une plateforme agréée, la connectivité PDP/PPF (cycle de vie des statuts de transmission, e-reporting) est formellement identifiée comme un **périmètre distinct**, à qualifier et connecter ultérieurement.
+3. **Dépendances** : Lots 1.1 & 1.2 (commit `ef6625d`).
 4. **Migrations** :
-   - Utilisation des tables existantes `import_batches`, `invoices`, `third_parties` (ajout éventuel d'une colonne `preview_payload_json` sur `import_batches` via migration `007` pour stocker les lignes prévisualisées avant confirmation).
-5. **API et interfaces concernées** :
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/imports/invoices-template`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/imports/invoices/preview`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/imports/invoices/:batchId/commit`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/imports/invoices/:batchId/cancel`
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/imports` (historique des imports)
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices` (liste filtrable des factures émises, reçues et avoirs)
-6. **Règles métier** :
-   - Idempotence stricte : ré-importer le même fichier (`file_sha256_checksum` déjà `COMMITTED` dans le dossier) ou confirmer deux fois le même `batchId` est bloqué (`409 Conflict` / `REJECTED_DUPLICATE`).
-   - Prise en charge native des avoirs (`CREDIT_NOTE`) avec montants signés ou normalisés sans erreur d'arrondi flottant.
-7. **Contrôles de sécurité** :
-   - Permission `UPLOAD` requise pour prévisualiser/importer, `VIEW` pour lister.
-   - Limite de taille (5 Mo / 5 000 lignes max par lot en mode synchrone), neutralisation de tout contenu malveillant et audit `INVOICE_BATCH_IMPORTED`.
-8. **Tests automatisés** :
-   - Suite `src/tests/phase1-lot3-invoice-imports.test.ts` : import valide (factures émises + reçues + avoirs), rejet d'un CSV avec colonnes manquantes, rapport d'erreurs précis par ligne (date invalide, $\text{HT}+\text{TVA}\neq\text{TTC}$), blocage du ré-import du même fichier (idempotence `SHA-256`) et de la double confirmation, annulation avant confirmation sans effet de bord.
-9. **Tests UX/UI** :
-   - Parcours complet dans l'onglet `Factures et dépenses` : téléchargement du modèle, sélection du fichier, table de mapping et d'aperçu des erreurs par ligne, bouton d'annulation et bouton de confirmation, puis affichage dans le tableau des factures.
-10. **Critères d'acceptation** :
-    - Le Module 3 passe au statut **`TERMINÉ ET TESTÉ`**.
-11. **Risques et limitations** :
-    - Pour ne pas introduire de dépendance npm externe lourde ou vulnérable pour le format binaire `.xlsx`, l'import supporte les fichiers `.csv` et `.tsv` générés par Excel (séparateurs `,`, `;` et tabulation avec BOM UTF-8) et documente explicitement l'enregistrement « *CSV UTF-8 (délimité par des points-virgules)* » depuis Excel.
-12. **Conditions de passage au Lot 1.4** :
-    - `npm run typecheck && npm test` à 100 %.
+   - Migration `007_phase1_lot1_3_quotes_and_invoicing` : création des tables `quotes`, `quote_lines`, `invoice_lines`, `invoice_payments`, et enrichissement de la table `invoices` (colonnes `origin_quote_id`, `invoice_status`, `payment_status`, `legal_mentions_json`, etc.).
+5. **API REST exposées** :
+   - `GET /api/organizations/:orgId/dossiers/:dossierId/quotes` & `POST .../quotes`
+   - `GET/PUT/DELETE /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId`
+   - `POST /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId/convert-to-invoice`
+   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices` & `POST .../invoices` (création manuelle de facture de vente)
+   - `GET/PUT /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId`
+   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/finalize`
+   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/credit-note` (annulation par avoir)
+   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/payments` (enregistrement d'un règlement)
+   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/printable` (aperçu imprimable)
+   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/facturx-xml` (flux Factur-X XML niveau 2)
+6. **Règles métier & sécurité** :
+   - Monnaie en unités mineures entières, arithmétique exacte sans flottant IEEE-754.
+   - Isolation stricte inter-organisations et contrôle RBAC (`assertDossierAccess`).
+   - Traçabilité inaltérable dans `audit_logs` de chaque action (création, modification, conversion de devis, finalisation, émission d'avoir, enregistrement de paiement).
+7. **Critères d'acceptation** :
+   - 100% des tests passants, matrice d'acceptation validée, non-régression complète.
 
 ---
 

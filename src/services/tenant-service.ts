@@ -10,6 +10,7 @@ import {
   User,
   StoredDocument,
   DocumentCategory,
+  DocumentWorkflowStatus,
 } from "../domain/types.js";
 import { CurrencyCode, getCurrencyExponent } from "../domain/money.js";
 import {
@@ -1601,6 +1602,35 @@ export interface IngestionResult {
   heuristicWarning?: string;
 }
 
+/**
+ * Valide les transitions autorisées et interdites sur le cycle de vie documentaire à 6 statuts.
+ * Protège contre la réouverture sauvage d'un document validé ou le passage direct d'un document rejeté vers validé.
+ */
+export function validateDocumentWorkflowTransition(
+  currentStatus: DocumentWorkflowStatus,
+  targetStatus: DocumentWorkflowStatus
+): void {
+  const allowedTransitions: Record<DocumentWorkflowStatus, DocumentWorkflowStatus[]> = {
+    RECEIVED: ["EXTRACTED", "PENDING_REVIEW", "REJECTED"],
+    STORED: ["EXTRACTED", "PENDING_REVIEW", "REJECTED"],
+    EXTRACTED: ["PENDING_REVIEW", "CORRECTED", "VALIDATED", "REJECTED"],
+    CHECKED: ["PENDING_REVIEW", "CORRECTED", "VALIDATED", "REJECTED"],
+    SUGGESTED: ["PENDING_REVIEW", "CORRECTED", "VALIDATED", "REJECTED"],
+    PENDING_REVIEW: ["CORRECTED", "VALIDATED", "REJECTED"],
+    CORRECTED: ["VALIDATED", "REJECTED", "CORRECTED"],
+    VALIDATED: ["EXPORTED"], // Un document VALIDATED ne peut plus être directement REJECTED ou rétrogradé
+    REJECTED: ["PENDING_REVIEW", "CORRECTED"], // Un document rejeté doit être réexaminé ou corrigé avant validation
+    EXPORTED: [], // Statut terminal
+  };
+
+  const allowed = allowedTransitions[currentStatus] || [];
+  if (!allowed.includes(targetStatus)) {
+    throw new Error(
+      `Transition de statut documentaire interdite : impossible de passer de "${currentStatus}" à "${targetStatus}".`
+    );
+  }
+}
+
 export async function ingestDocumentIntoDossier(params: {
   session: AuthenticatedSessionContext | null;
   organizationId: string;
@@ -1701,156 +1731,162 @@ export async function ingestDocumentIntoDossier(params: {
 
   await defaultDocumentStorage.saveFile(storageKey, params.contentBuffer);
 
-  // 6. Extraction OCR / IA assistée (déterministe test avec isolation anti-injection)
-  const aiAdapter = new DeterministicMockAiAdapter();
-  const { extraction, metadata } = await aiAdapter.extractInvoiceData({
-    organizationId: params.organizationId,
-    dossierId: params.dossierId,
-    filename: safeFilename,
-    mimeType: validation.detectedMimeType,
-    rawTextContent: params.contentBuffer.toString("utf-8"),
-  });
+  try {
+    // 6. Extraction OCR / IA assistée (déterministe test avec isolation anti-injection)
+    const aiAdapter = new DeterministicMockAiAdapter();
+    const { extraction, metadata } = await aiAdapter.extractInvoiceData({
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      filename: safeFilename,
+      mimeType: validation.detectedMimeType,
+      rawTextContent: params.contentBuffer.toString("utf-8"),
+    });
 
-  // 7. Détection de doublon heuristique (même tiers, même date, même montant TTC)
-  let heuristicDuplicateOfId: string | null = null;
-  let overrideDuplicateReason: string | null = null;
+    // 7. Détection de doublon heuristique (même tiers, même date, même montant TTC)
+    let heuristicDuplicateOfId: string | null = null;
+    let overrideDuplicateReason: string | null = null;
 
-  if (!duplicateDetected) {
-    const candidateGross = extraction.grossAmountMinor?.value;
-    const candidateDate = extraction.invoiceDate?.value;
-    const candidateIssuer = extraction.issuerName?.value;
+    if (!duplicateDetected) {
+      const candidateGross = extraction.grossAmountMinor?.value;
+      const candidateDate = extraction.invoiceDate?.value;
+      const candidateIssuer = extraction.issuerName?.value;
 
-    if (candidateGross && candidateDate && candidateIssuer) {
-      const existingDocs = db
-        .prepare(
-          "SELECT id, original_filename, extracted_data_json FROM documents WHERE organization_id = ? AND dossier_id = ? AND workflow_status != 'REJECTED'"
-        )
-        .all(params.organizationId, params.dossierId) as Array<{
-        id: string;
-        original_filename: string;
-        extracted_data_json: string;
-      }>;
+      if (candidateGross && candidateDate && candidateIssuer) {
+        const existingDocs = db
+          .prepare(
+            "SELECT id, original_filename, extracted_data_json FROM documents WHERE organization_id = ? AND dossier_id = ? AND workflow_status != 'REJECTED'"
+          )
+          .all(params.organizationId, params.dossierId) as Array<{
+          id: string;
+          original_filename: string;
+          extracted_data_json: string;
+        }>;
 
-      for (const d of existingDocs) {
-        try {
-          const parsed = JSON.parse(d.extracted_data_json);
-          const ext = parsed.extraction;
-          if (
-            ext &&
-            ext.invoiceDate?.value === candidateDate &&
-            ext.grossAmountMinor?.value === candidateGross
-          ) {
-            duplicateDetected = true;
-            duplicateType = "HEURISTIC";
-            conflictingDocumentId = d.id;
-            heuristicDuplicateOfId = d.id;
-            heuristicWarning = `Suspicion de doublon heuristique : document ${d.original_filename} (${d.id}) a la même date (${candidateDate}) et le même montant (${(candidateGross / 100).toFixed(2)} €).`;
-            break;
+        for (const d of existingDocs) {
+          try {
+            const parsed = JSON.parse(d.extracted_data_json);
+            const ext = parsed.extraction;
+            if (
+              ext &&
+              ext.invoiceDate?.value === candidateDate &&
+              ext.grossAmountMinor?.value === candidateGross
+            ) {
+              duplicateDetected = true;
+              duplicateType = "HEURISTIC";
+              conflictingDocumentId = d.id;
+              heuristicDuplicateOfId = d.id;
+              heuristicWarning = `Suspicion de doublon heuristique : document ${d.original_filename} (${d.id}) a la même date (${candidateDate}) et le même montant (${(candidateGross / 100).toFixed(2)} €).`;
+              break;
+            }
+          } catch {
+            // ignore parsing error on legacy document
           }
-        } catch {
-          // ignore parsing error on legacy document
         }
       }
     }
-  }
 
-  // Traitement du dépassement de doublon si autorisé et justifié
-  if (duplicateDetected && params.allowDuplicateOverride && params.overrideReason) {
-    overrideDuplicateReason = params.overrideReason.trim();
-  }
+    // Traitement du dépassement de doublon si autorisé et justifié
+    if (duplicateDetected && params.allowDuplicateOverride && params.overrideReason) {
+      overrideDuplicateReason = params.overrideReason.trim();
+    }
 
-  // 8. Insertion en base de données avec statut PENDING_REVIEW
-  db.prepare(
-    `INSERT INTO documents (
-      id, organization_id, dossier_id, original_filename, mime_type,
-      size_bytes, sha256_checksum, storage_key, category, workflow_status,
-      extracted_data_json, ai_model_version, rule_version_id, uploaded_by_user_id,
-      validated_by_user_id, validated_at, rejection_reason, rejected_by_user_id, rejected_at,
-      override_duplicate_reason, heuristic_duplicate_of_id, quarantine_status,
-      retention_until_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, 'CLEAN', ?, ?, ?)`
-  ).run(
-    id,
-    params.organizationId,
-    params.dossierId,
-    safeFilename,
-    validation.detectedMimeType,
-    params.contentBuffer.byteLength,
-    sha256Checksum,
-    storageKey,
-    params.category ?? extraction.category.value,
-    JSON.stringify({ extraction, aiMetadata: metadata }),
-    metadata.modelName,
-    dossierRow.country_config_version_id,
-    params.session!.user.id,
-    overrideDuplicateReason,
-    heuristicDuplicateOfId,
-    retentionUntilDate,
-    now,
-    now
-  );
+    // 8. Insertion en base de données avec statut PENDING_REVIEW
+    db.prepare(
+      `INSERT INTO documents (
+        id, organization_id, dossier_id, original_filename, mime_type,
+        size_bytes, sha256_checksum, storage_key, category, workflow_status,
+        extracted_data_json, ai_model_version, rule_version_id, uploaded_by_user_id,
+        validated_by_user_id, validated_at, rejection_reason, rejected_by_user_id, rejected_at,
+        override_duplicate_reason, heuristic_duplicate_of_id, quarantine_status,
+        retention_until_date, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, 'CLEAN', ?, ?, ?)`
+    ).run(
+      id,
+      params.organizationId,
+      params.dossierId,
+      safeFilename,
+      validation.detectedMimeType,
+      params.contentBuffer.byteLength,
+      sha256Checksum,
+      storageKey,
+      params.category ?? extraction.category.value,
+      JSON.stringify({ extraction, aiMetadata: metadata }),
+      metadata.modelName,
+      dossierRow.country_config_version_id,
+      params.session!.user.id,
+      overrideDuplicateReason,
+      heuristicDuplicateOfId,
+      retentionUntilDate,
+      now,
+      now
+    );
 
-  // 9. Journal d'audit inaltérable
-  recordAuditLog(
-    {
+    // 9. Journal d'audit inaltérable
+    recordAuditLog(
+      {
+        organizationId: params.organizationId,
+        dossierId: params.dossierId,
+        actorUserId: params.session!.user.id,
+        actorRole: "AUTHENTICATED_USER",
+        action: overrideDuplicateReason
+          ? "DOCUMENT_INGESTED_WITH_DUPLICATE_OVERRIDE"
+          : "DOCUMENT_INGESTED_PENDING_HUMAN_REVIEW",
+        targetEntityType: "DOCUMENT",
+        targetEntityId: id,
+        justification: overrideDuplicateReason,
+        metadata: {
+          filename: safeFilename,
+          sha256Checksum,
+          duplicateDetected,
+          duplicateType,
+          conflictingDocumentId,
+          heuristicWarning,
+          promptInjectionDetected: metadata.promptInjectionDetected,
+        },
+      },
+      db
+    );
+
+    const document: StoredDocument = {
+      id,
       organizationId: params.organizationId,
       dossierId: params.dossierId,
-      actorUserId: params.session!.user.id,
-      actorRole: "AUTHENTICATED_USER",
-      action: overrideDuplicateReason
-        ? "DOCUMENT_INGESTED_WITH_DUPLICATE_OVERRIDE"
-        : "DOCUMENT_INGESTED_PENDING_HUMAN_REVIEW",
-      targetEntityType: "DOCUMENT",
-      targetEntityId: id,
-      justification: overrideDuplicateReason,
-      metadata: {
-        filename: safeFilename,
-        sha256Checksum,
-        duplicateDetected,
-        duplicateType,
-        conflictingDocumentId,
-        heuristicWarning,
-        promptInjectionDetected: metadata.promptInjectionDetected,
-      },
-    },
-    db
-  );
+      originalFilename: safeFilename,
+      mimeType: validation.detectedMimeType,
+      sizeBytes: params.contentBuffer.byteLength,
+      sha256Checksum,
+      storageKey,
+      category: params.category ?? extraction.category.value,
+      workflowStatus: "PENDING_REVIEW",
+      extractedDataJson: JSON.stringify({ extraction, aiMetadata: metadata }),
+      aiModelVersion: metadata.modelName,
+      ruleVersionId: dossierRow.country_config_version_id,
+      uploadedByUserId: params.session!.user.id,
+      validatedByUserId: null,
+      validatedAt: null,
+      rejectionReason: null,
+      rejectedByUserId: null,
+      rejectedAt: null,
+      overrideDuplicateReason,
+      heuristicDuplicateOfId,
+      quarantineStatus: "CLEAN",
+      retentionUntilDate,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-  const document: StoredDocument = {
-    id,
-    organizationId: params.organizationId,
-    dossierId: params.dossierId,
-    originalFilename: safeFilename,
-    mimeType: validation.detectedMimeType,
-    sizeBytes: params.contentBuffer.byteLength,
-    sha256Checksum,
-    storageKey,
-    category: params.category ?? extraction.category.value,
-    workflowStatus: "PENDING_REVIEW",
-    extractedDataJson: JSON.stringify({ extraction, aiMetadata: metadata }),
-    aiModelVersion: metadata.modelName,
-    ruleVersionId: dossierRow.country_config_version_id,
-    uploadedByUserId: params.session!.user.id,
-    validatedByUserId: null,
-    validatedAt: null,
-    rejectionReason: null,
-    rejectedByUserId: null,
-    rejectedAt: null,
-    overrideDuplicateReason,
-    heuristicDuplicateOfId,
-    quarantineStatus: "CLEAN",
-    retentionUntilDate,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  return {
-    document,
-    duplicateDetected,
-    duplicateType,
-    conflictingDocumentId,
-    heuristicWarning,
-  };
+    return {
+      document,
+      duplicateDetected,
+      duplicateType,
+      conflictingDocumentId,
+      heuristicWarning,
+    };
+  } catch (err) {
+    // Nettoyage immédiat du fichier physique orphelin en cas d'échec SQL ou de traitement
+    await defaultDocumentStorage.deleteFile(storageKey).catch(() => {});
+    throw err;
+  }
 }
 
 export function listDossierDocuments(params: {
@@ -2083,11 +2119,7 @@ export function updateDocumentExtraction(params: {
     throw new Error(`Document introuvable : ${params.documentId}`);
   }
 
-  if (doc.workflow_status === "VALIDATED" || doc.workflow_status === "EXPORTED") {
-    throw new Error(
-      `Impossible de modifier l'extraction d'un document au statut ${doc.workflow_status}.`
-    );
-  }
+  validateDocumentWorkflowTransition(doc.workflow_status, "CORRECTED");
 
   let parsed: any = {};
   try {
@@ -2211,9 +2243,7 @@ export function validateDocument(params: {
     throw new Error(`Document introuvable : ${params.documentId}`);
   }
 
-  if (doc.workflow_status === "REJECTED") {
-    throw new Error("Impossible de valider un document rejeté sans le réexaminer.");
-  }
+  validateDocumentWorkflowTransition(doc.workflow_status, "VALIDATED");
 
   const now = new Date().toISOString();
   const userId = params.session!.user.id;
@@ -2281,9 +2311,7 @@ export function rejectDocument(params: {
     throw new Error(`Document introuvable : ${params.documentId}`);
   }
 
-  if (doc.workflow_status === "EXPORTED") {
-    throw new Error("Impossible de rejeter un document déjà exporté.");
-  }
+  validateDocumentWorkflowTransition(doc.workflow_status, "REJECTED");
 
   const now = new Date().toISOString();
   const userId = params.session!.user.id;
@@ -2356,6 +2384,19 @@ export function createDraftEntryFromDocument(params: {
   if (doc.workflow_status !== "VALIDATED") {
     throw new Error(
       `Le document doit être au statut VALIDATED pour générer une écriture (statut actuel : ${doc.workflow_status}).`
+    );
+  }
+
+  // Empêche la génération répétée d'écritures pour une même pièce justificative sans action explicite
+  const existingEntry = db
+    .prepare(
+      "SELECT id, piece_number, status FROM accounting_entries WHERE document_id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(doc.id, params.organizationId, params.dossierId) as any;
+
+  if (existingEntry) {
+    throw new Error(
+      `Une écriture comptable (${existingEntry.piece_number} / ID: ${existingEntry.id}) a déjà été générée pour cette pièce justificative. Supprimez ou extournez l'écriture existante avant de régénérer un brouillon.`
     );
   }
 

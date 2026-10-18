@@ -60,6 +60,8 @@ export interface AntimalwareScanResult {
   threatName?: string;
   scannerEngine: string;
   scannedAt: string;
+  isSimulatedSignatureCheckOnly: boolean;
+  securityNotice?: string;
 }
 
 /**
@@ -70,21 +72,29 @@ export interface AntimalwareScanner {
 }
 
 /**
- * Scanner de sécurité local par défaut (vérifie EICAR, signatures exécutables imbriquées et intégrité).
+ * Scanner de sécurité local pour l'environnement de développement et les tests automatisés.
+ * 
+ * IMPORTANT : Ce composant valide la présence de signatures de test standardisées (EICAR)
+ * et bloque les charges exécutables brutes (MZ/ELF). Il ne constitue PAS un moteur antivirus
+ * d'entreprise autonome avec base virale heuristique dynamique.
+ * En environnement de production, injecter un adaptateur vers un service qualifié (ex: ClamAV,
+ * passerelle ICAP ou API Antivirus Cloud) via `setAntimalwareScanner()`.
  */
 export class LocalSafetyAntimalwareScanner implements AntimalwareScanner {
-  public readonly scannerEngine = "ComptaNova-LocalSafetyScanner-v1";
+  public readonly scannerEngine = "ComptaNova-LocalSafetyScanner-v1 (Test & Signatures statiques)";
 
   public async scan(buffer: Buffer, filename: string): Promise<AntimalwareScanResult> {
     const scannedAt = new Date().toISOString();
 
-    // 1. Détection de la signature de test EICAR
+    // 1. Détection de la signature de test EICAR standardisée
     if (buffer.includes(Buffer.from(EICAR_SIGNATURE, "ascii"))) {
       return {
         isClean: false,
-        threatName: "EICAR-Test-Signature [MALWARE_SIMULATED]",
+        threatName: "EICAR-Test-Signature [MALWARE_SIMULATED_TEST_SIGNATURE]",
         scannerEngine: this.scannerEngine,
         scannedAt,
+        isSimulatedSignatureCheckOnly: true,
+        securityNotice: "Détection via signature de test standardisée EICAR (environnement de test / développement).",
       };
     }
 
@@ -95,6 +105,7 @@ export class LocalSafetyAntimalwareScanner implements AntimalwareScanner {
         threatName: "Win32/PE-Executable-Payload-Detected",
         scannerEngine: this.scannerEngine,
         scannedAt,
+        isSimulatedSignatureCheckOnly: true,
       };
     }
 
@@ -111,6 +122,7 @@ export class LocalSafetyAntimalwareScanner implements AntimalwareScanner {
         threatName: "Linux/ELF-Executable-Payload-Detected",
         scannerEngine: this.scannerEngine,
         scannedAt,
+        isSimulatedSignatureCheckOnly: true,
       };
     }
 
@@ -118,6 +130,8 @@ export class LocalSafetyAntimalwareScanner implements AntimalwareScanner {
       isClean: true,
       scannerEngine: this.scannerEngine,
       scannedAt,
+      isSimulatedSignatureCheckOnly: true,
+      securityNotice: "Fichier vérifié par signatures statiques locales. Moteur antivirus complet requis en production.",
     };
   }
 }

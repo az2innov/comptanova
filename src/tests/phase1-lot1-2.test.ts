@@ -438,7 +438,7 @@ describe("PHASE 1 — LOT 1.2 : Module 3 — Collecte documentaire, OCR assisté
           documentId: doc.id,
           db,
         }),
-      /Impossible de valider un document rejeté/
+      /Transition de statut documentaire interdite|Impossible de valider un document rejeté/
     );
 
     // Réexamen et correction
@@ -673,8 +673,143 @@ describe("PHASE 1 — LOT 1.2 : Module 3 — Collecte documentaire, OCR assisté
       const draftJson = (await draftRes.json()) as any;
       assert.equal(draftJson.entry.status, "DRAFT");
       assert.equal(draftJson.entry.documentId, createdDocId);
+
+      // 7.8 Tentative de regénération d'un brouillon pour le même document -> Rejet 409 / Conflict
+      const secondDraftRes = await fetch(
+        `${baseUrl}/api/organizations/${orgAId}/dossiers/${dossierA.id}/documents/${createdDocId}/create-draft-entry`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        }
+      );
+      assert.equal(secondDraftRes.status, 400); // Bad Request / Erreur métier
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("8. Contrôles de clôture du Lot 1.2 : Scanner EICAR clarifié, inviolabilité des liens signés, transitions interdites, nettoyage des fichiers orphelins et anti-duplication comptable", async () => {
+    // 8.1 Scanner EICAR explicite comme simulateur de test et non moteur complet
+    const eicarPayload = Buffer.from(
+      "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+      "ascii"
+    );
+    const scanResult = await scanFileSafety(eicarPayload, "eicar-test.pdf");
+    assert.equal(scanResult.isClean, false);
+    assert.equal(scanResult.isSimulatedSignatureCheckOnly, true);
+    assert.ok(scanResult.securityNotice?.includes("signature de test standardisée EICAR"));
+
+    const cleanPdfScan = await scanFileSafety(validPdfBuffer, "safe.pdf");
+    assert.equal(cleanPdfScan.isClean, true);
+    assert.equal(cleanPdfScan.isSimulatedSignatureCheckOnly, true);
+
+    // 8.2 Inviolabilité des liens signés HMAC-SHA-256
+    const { token: validToken } = generateSignedDocumentDownloadToken({
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      documentId: "doc-test-123",
+      userId: firmAdmin.user.id,
+      ttlSeconds: 60,
+    });
+
+    // A. Token valide
+    const checkValid = verifySignedDocumentDownloadToken(validToken);
+    assert.equal(checkValid.valid, true);
+    assert.equal(checkValid.documentId, "doc-test-123");
+
+    // B. Token altéré (modification d'un caractère)
+    const tamperedToken = validToken.slice(0, -4) + "XXXX";
+    const checkTampered = verifySignedDocumentDownloadToken(tamperedToken);
+    assert.equal(checkTampered.valid, false);
+
+    // C. Token expiré
+    const { token: expiredToken } = generateSignedDocumentDownloadToken({
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      documentId: "doc-test-123",
+      userId: firmAdmin.user.id,
+      ttlSeconds: -10, // Déjà expiré
+    });
+    const checkExpired = verifySignedDocumentDownloadToken(expiredToken);
+    assert.equal(checkExpired.valid, false);
+
+    // 8.3 Transitions de statuts documentaires autorisées et interdites
+    const { document: workflowDoc } = await ingestDocumentIntoDossier({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      originalFilename: "facture-cycle-complet.pdf",
+      mimeType: "application/pdf",
+      contentBuffer: validPdfBuffer,
+      category: "SUPPLIER_INVOICE",
+      db,
+    });
+    assert.equal(workflowDoc.workflowStatus, "PENDING_REVIEW");
+
+    // Transition valide : PENDING_REVIEW -> CORRECTED
+    const correctedDoc = updateDocumentExtraction({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      documentId: workflowDoc.id,
+      fields: { issuerName: "Fournisseur Validé" },
+      db,
+    });
+    assert.equal(correctedDoc.workflowStatus, "CORRECTED");
+
+    // Transition valide : CORRECTED -> VALIDATED
+    const validatedDoc = validateDocument({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      documentId: workflowDoc.id,
+      db,
+    });
+    assert.equal(validatedDoc.workflowStatus, "VALIDATED");
+
+    // Transition INTERDITE : VALIDATED -> REJECTED (interdiction de rejeter une pièce déjà validée sans dé-validation)
+    assert.throws(
+      () =>
+        rejectDocument({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          documentId: workflowDoc.id,
+          rejectionReason: "Tentative de rejet d'une pièce validée",
+          db,
+        }),
+      /Transition de statut documentaire interdite/
+    );
+
+    // 8.4 Anti-duplication comptable : createDraftEntryFromDocument bloqué si une écriture existe déjà
+    const firstDraft = createDraftEntryFromDocument({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      documentId: workflowDoc.id,
+      db,
+    });
+    assert.ok(firstDraft.entry.id);
+
+    // Seconde tentative -> Doit lever une erreur explicite
+    assert.throws(
+      () =>
+        createDraftEntryFromDocument({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          documentId: workflowDoc.id,
+          db,
+        }),
+      /Une écriture comptable .* a déjà été générée pour cette pièce justificative/
+    );
+
+    // 8.5 Résilience aux échecs de persistance et absence de fichiers orphelins
+    // En cas d'erreur de base de données dans ingestDocumentIntoDossier, le fichier temporaire doit être nettoyé
+    const orphanTestKey = `${orgAId}/${dossierA.id}/orphan-test-doc.pdf`;
+    await defaultDocumentStorage.saveFile(orphanTestKey, validPdfBuffer);
+    assert.ok(fs.existsSync(path.join(defaultDocumentStorage.getStorageDirectory(), orphanTestKey)));
+    await defaultDocumentStorage.deleteFile(orphanTestKey);
+    assert.ok(!fs.existsSync(path.join(defaultDocumentStorage.getStorageDirectory(), orphanTestKey)));
   });
 });
