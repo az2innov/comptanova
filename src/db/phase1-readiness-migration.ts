@@ -418,6 +418,22 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
   );
 
   ${MIGRATION_003_PHASE1_READINESS_SQL}
+
+  -- SEC-OPEN-04 : Trigger PostgreSQL 16 garantissant l'inaltérabilité (append-only) de audit_logs
+  CREATE OR REPLACE FUNCTION prevent_audit_logs_mutation()
+  RETURNS TRIGGER
+  LANGUAGE plpgsql
+  AS $$
+  BEGIN
+    RAISE EXCEPTION 'Violation d''inaltérabilité [SEC-OPEN-04] : modification ou suppression interdite sur audit_logs.';
+  END;
+  $$;
+
+  DROP TRIGGER IF EXISTS trg_pg_audit_logs_immutable ON audit_logs;
+  CREATE TRIGGER trg_pg_audit_logs_immutable
+  BEFORE UPDATE OR DELETE ON audit_logs
+  FOR EACH ROW
+  EXECUTE FUNCTION prevent_audit_logs_mutation();
 `;
 
 /**

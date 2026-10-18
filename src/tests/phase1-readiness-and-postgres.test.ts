@@ -23,6 +23,16 @@ import {
   parseDecimalToMinor,
   subtractMoney,
 } from "../domain/money.js";
+import { getAppConfig } from "../config/app-config.js";
+import {
+  authenticateUser,
+  resolveSessionByToken,
+  revokeSession,
+} from "../auth/auth-service.js";
+import {
+  createAppServer,
+  resetRateLimitBucketsForTests,
+} from "../server.js";
 
 describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Multi-devises & PostgreSQL 16 réel)", () => {
   it("1. Moteur monétaire international : supporte les avoirs (montants négatifs), 0/2/3/4 décimales et conversions FX auditées", () => {
@@ -364,5 +374,161 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       20,
       `Les 20 tables métier du schéma Phase 0 (12) + Phase 1 (8) doivent être créées sans erreur dans PostgreSQL 16 (reçu: ${tableCount})`
     );
+  });
+
+  it("5. Remédiations post-audit de clôture (SEC-OPEN-01 à SEC-OPEN-05 & REQ-002) : secrets prod obligatoires, RBAC audit-logs, révocation/expiration session, rate-limit 429, triggers audit_logs et CSP/palette UI", async () => {
+    // 5.1 SEC-OPEN-01 : Refus de démarrage en production si SESSION_SECRET ou SIGNED_URL_SECRET est absent ou faible
+    assert.throws(
+      () => getAppConfig({ NODE_ENV: "production" }),
+      /FATAL \[SEC-OPEN-01\]/
+    );
+    assert.throws(
+      () =>
+        getAppConfig({
+          NODE_ENV: "production",
+          SESSION_SECRET: "short-secret",
+          SIGNED_URL_SECRET: "another-short-secret",
+        }),
+      /FATAL \[SEC-OPEN-01\]/
+    );
+    assert.throws(
+      () =>
+        getAppConfig({
+          NODE_ENV: "production",
+          SESSION_SECRET: "remplacer_par_une_chaine_aleatoire_de_64_caracteres_minimum",
+          SIGNED_URL_SECRET: "remplacer_par_une_autre_chaine_aleatoire_de_64_caracteres_minimum",
+        }),
+      /FATAL \[SEC-OPEN-01\]/
+    );
+    const prodCfg = getAppConfig({
+      NODE_ENV: "production",
+      SESSION_SECRET: "prod_session_secret_9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1",
+      SIGNED_URL_SECRET: "prod_signed_url_secret_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e",
+    });
+    assert.equal(prodCfg.nodeEnv, "production");
+    assert.equal(prodCfg.brandColors.primaryDeepEmerald, "#153D35");
+
+    // Préparation base en mémoire
+    const db = createDatabaseConnection(":memory:");
+    resetSharedDatabaseForTests(db);
+    runMigrations(db);
+    seedDemoData(db);
+    resetRateLimitBucketsForTests();
+
+    const server = createAppServer(db, {
+      maxRequestsPerMinute: 100,
+      maxLoginRequestsPerMinute: 3,
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === "object");
+    const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      // 5.2 SEC-OPEN-04 : Triggers d'inaltérabilité (append-only) sur audit_logs
+      assert.throws(() => {
+        db.prepare(`UPDATE audit_logs SET action = 'TAMPERED'`).run();
+      }, /Violation d'inaltérabilité \[SEC-OPEN-04\]/);
+
+      assert.throws(() => {
+        db.prepare(`DELETE FROM audit_logs`).run();
+      }, /Violation d'inaltérabilité \[SEC-OPEN-04\]/);
+
+      // 5.3 SEC-OPEN-03 (Sessions) : Révocation immédiate et expiration de session
+      const authCollab = authenticateUser(
+        "collab@cabinet-hexagone-demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      assert.ok(resolveSessionByToken(authCollab.rawToken, db));
+
+      // Expiration forcée dans le passé
+      const expiredAuth = authenticateUser(
+        "collab@cabinet-hexagone-demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      db.prepare(`UPDATE auth_sessions SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?`).run(
+        expiredAuth.context.sessionId
+      );
+      assert.equal(resolveSessionByToken(expiredAuth.rawToken, db), null);
+
+      // Révocation explicite
+      const toRevokeAuth = authenticateUser(
+        "collab@cabinet-hexagone-demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      revokeSession(toRevokeAuth.rawToken, db);
+      assert.equal(resolveSessionByToken(toRevokeAuth.rawToken, db), null);
+
+      // 5.4 SEC-OPEN-02 : Seul FIRM_ADMIN (ou PLATFORM_ADMIN justifié) peut lire /api/organizations/:orgId/audit-logs
+      const orgId = authCollab.context.memberships[0]!.organizationId;
+      const collabAuditRes = await fetch(
+        `${baseUrl}/api/organizations/${orgId}/audit-logs`,
+        {
+          headers: { Authorization: `Bearer ${authCollab.rawToken}` },
+        }
+      );
+      assert.equal(collabAuditRes.status, 403);
+
+      const authFirmAdmin = authenticateUser(
+        "expert@cabinet-hexagone-demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      const adminAuditRes = await fetch(
+        `${baseUrl}/api/organizations/${orgId}/audit-logs`,
+        {
+          headers: { Authorization: `Bearer ${authFirmAdmin.rawToken}` },
+        }
+      );
+      assert.equal(adminAuditRes.status, 200);
+
+      // 5.5 SEC-OPEN-05 & REQ-002 : En-têtes CSP et palette de couleurs officielle (#153D35, #237D68, #D9A441)
+      const htmlRes = await fetch(`${baseUrl}/`);
+      assert.equal(htmlRes.status, 200);
+      assert.ok(htmlRes.headers.get("content-security-policy")?.includes("default-src 'self'"));
+      assert.equal(htmlRes.headers.get("x-frame-options"), "DENY");
+      assert.equal(htmlRes.headers.get("x-content-type-options"), "nosniff");
+      const htmlText = await htmlRes.text();
+      assert.ok(htmlText.includes("#153D35"), "La couleur primaire #153D35 doit être injectée dans l'UI");
+      assert.ok(htmlText.includes("#237D68"), "La couleur secondaire #237D68 doit être injectée dans l'UI");
+      assert.ok(htmlText.includes("#D9A441"), "La couleur d'accent #D9A441 doit être injectée dans l'UI");
+
+      // 5.6 SEC-OPEN-03 (Rate Limit) : Limitation anti-brute-force sur POST /api/auth/login (max 3/min configuré pour ce serveur de test)
+      for (let i = 0; i < 3; i++) {
+        const res = await fetch(`${baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: "expert@cabinet-hexagone-demo.local",
+            password: "DemoAdmin2026!",
+          }),
+        });
+        assert.equal(res.status, 200);
+      }
+      const rateLimitedRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "expert@cabinet-hexagone-demo.local",
+          password: "DemoAdmin2026!",
+        }),
+      });
+      assert.equal(rateLimitedRes.status, 429);
+    } finally {
+      resetRateLimitBucketsForTests();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      db.close();
+    }
   });
 });

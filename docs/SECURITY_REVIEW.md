@@ -1,75 +1,32 @@
-# REVUE DE SÉCURITÉ APPLICATIVE (`SECURITY_REVIEW.md`) — ComptaNova (Phase 0)
+# REVUE DE SÉCURITÉ APPLICATIVE (`SECURITY_REVIEW.md`) — ComptaNova (Clôture Phase 0)
 
-> **Avertissement méthodologique** : Ce document présente une revue de sécurité ciblée du code source, de l'architecture et des tests automatisés de la Phase 0. Il ne constitue pas un audit d'intrusion externe (pentest) ni une certification formelle (ISO 27001 / SOC 2 / SecNumCloud).
-
----
-
-## 1. Surfaces d'Attaque Examinées
-
-1. **Authentification et gestion des mots de passe** (`POST /api/auth/login`, [`src/auth/auth-service.ts`](../src/auth/auth-service.ts)).
-2. **Gestion des sessions et des jetons d'accès** (`Authorization: Bearer <token>`, table `auth_sessions`).
-3. **Contrôle d'accès inter-organisations (Multi-Tenant Isolation / IDOR)** (`/api/organizations/:orgId/...`).
-4. **Contrôle d'accès intra-organisation par dossier client** (`dossier_assignments`).
-5. **Accès administrateur plateforme (`PLATFORM_ADMIN`) aux données clientes**.
-6. **Ingestion documentaire et attaque par injection de prompt IA** ([`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts), [`src/services/tenant-service.ts`](../src/services/tenant-service.ts)).
-7. **Téléchargement de pièces justificatives privées** (jetons signés `HMAC-SHA256`).
-8. **Intégrité du journal d'audit applicatif** ([`src/audit/audit-service.ts`](../src/audit/audit-service.ts)).
-9. **Exposition des secrets et dépendances logicielles** (`package.json`, `.env.example`, `.gitignore`).
+> **Avertissement méthodologique** : Ce document présente les constats vérifiés lors de l'audit indépendant de clôture de la Phase 0 (2026-10-18) sur le code réel de `src/`. Il ne constitue pas un test d'intrusion externe ni une certification de sécurité.
 
 ---
 
-## 2. Mécanismes de Sécurité Implémentés et Vérifiés
+## 1. Synthèse des Contrôles de Sécurité par Surface d'Attaque
 
-### 2.1. Authentification et Mots de Passe
-- **Implémentation** : Hachage via `crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 })` avec un sel aléatoire de 16 octets par utilisateur. Vérification via `crypto.timingSafeEqual` pour prévenir les attaques temporelles (*timing attacks*).
-- **Test exécuté** : Test n° 2 de [`src/tests/phase0.test.ts`](../src/tests/phase0.test.ts) (succès avec mot de passe valide, échec avec mot de passe erroné + journalisation d'audit `AUTH_LOGIN_FAILED_WRONG_PASSWORD`).
-
-### 2.2. Sessions Côté Serveur
-- **Implémentation** : Jeton aléatoire de 32 octets signé par `HMAC-SHA256` avec `appConfig.sessionSecret`. Seul le hachage `SHA-256` du jeton est stocké dans `auth_sessions.token_hash`. Support de la révocation immédiate (`revokeSession`) et de l'expiration (`expires_at`).
-- **Test exécuté** : Test n° 2 de [`src/tests/phase0.test.ts`](../src/tests/phase0.test.ts) (vérification qu'une session révoquée retourne immédiatement `null`).
-
-### 2.3. Autorisations et Isolation Multi-Tenant
-- **Implémentation** :
-  - Chaque opération métier exige un `AuthenticatedSessionContext` valide.
-  - `assertOrganizationAccess()` vérifie l'appartenance effective de l'utilisateur à `organizationId` dans `organization_memberships`.
-  - `assertDossierAccess()` vérifie pour les collaborateurs (`ACCOUNTANT_COLLABORATOR`) et dirigeants (`CLIENT_DIRECTOR`) que le dossier leur est explicitement affecté dans `dossier_assignments` avec le flag de permission correspondant (`can_view`, `can_upload`, `can_edit_extraction`, `can_validate_accounting`, `can_export`).
-  - L'accès `PLATFORM_ADMIN` à une organisation cliente est refusé s'il n'est pas accompagné d'une justification écrite d'au moins 15 caractères (`PLATFORM_ADMIN_CROSS_TENANT_ACCESS_DENIED_NO_JUSTIFICATION`).
-- **Tests exécutés** : Tests n° 3, 4 et 9 de [`src/tests/phase0.test.ts`](../src/tests/phase0.test.ts) et Test n° 8 de [`src/tests/international-scope.test.ts`](../src/tests/international-scope.test.ts).
-
-### 2.4. Stockage Documentaire et Liens Signés
-- **Implémentation** :
-  - Validation de la liste blanche MIME (`application/pdf`, `image/png`, `image/jpeg`, `text/csv`) et de la taille (`1 octet` à `15 Mo`).
-  - Nettoyage du nom de fichier dans `storage_key` (`replace(/[^a-zA-Z0-9._-]/g, "_")`) pour empêcher toute traversée de répertoires (*path traversal*).
-  - Jetons de téléchargement temporaires signés par `HMAC-SHA256` incluant `organizationId`, `dossierId`, `documentId`, `userId` et `expiresAtUnix`.
-- **Tests exécutés** : Tests n° 7 et 8 de [`src/tests/phase0.test.ts`](../src/tests/phase0.test.ts).
-
-### 2.5. Sécurité IA et Défense contre l'Injection de Prompt
-- **Implémentation** :
-  - `inspectAndIsolateUntrustedContent()` détecte les motifs d'injection (`ignore previous instructions`, `system prompt`, `validate_entry`, `grant_admin`, `PLATFORM_ADMIN`, `VALIDATED_BY_HUMAN`, `drop table`), neutralise les balises et encapsule le texte dans `<untrusted_document_content>`.
-  - Lorsqu'une tentative d'injection est détectée, tous les champs extraits sont forcés au statut `NEEDS_HUMAN_REVIEW`.
-  - `assertAiProviderAllowedForEnvironment()` bloque l'adaptateur simulé `mock-deterministic` en environnement de production (`NODE_ENV === "production"`).
-- **Tests exécutés** : Test n° 7 de [`src/tests/phase0.test.ts`](../src/tests/phase0.test.ts) et Test n° 2 de [`src/tests/phase1-readiness-and-postgres.test.ts`](../src/tests/phase1-readiness-and-postgres.test.ts).
-
-### 2.6. En-têtes HTTP de Sécurité et Gestion des Secrets
-- **Implémentation** :
-  - Le serveur HTTP ([`src/server.ts`](../src/server.ts)) applique systématiquement `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` et `Content-Security-Policy`.
-  - Aucun secret réel n'est présent dans le code source ; `.gitignore` exclut `.env`, `data/*.db` et `dist/`.
-  - `package.json` ne dépend d'aucune bibliothèque runtime tierce (uniquement `@types/node` et `typescript` en développement), réduisant drastiquement le risque *supply-chain*.
+| Domaine / Surface d'attaque | Fichiers & Lignes inspectés | Statut d'audit (après Lot 0.5) | Preuve / Test associé |
+| :--- | :--- | :--- | :--- |
+| **1. Isolation Multi-Tenant (`organization_id`) & RBAC `/audit-logs`** | [`src/auth/auth-service.ts` L230-L340](../src/auth/auth-service.ts#L230-L340)<br>[`src/server.ts` L390-L401](../src/server.ts#L390-L401) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | Accès croisé entre organisations bloqué (`403`) et `GET /api/organizations/:orgId/audit-logs` restreint à `FIRM_ADMIN` (`phase0.test.ts` #3, #9 ; `phase1-readiness-and-postgres.test.ts` #5.4). |
+| **2. Contrôle d'accès RBAC & privilèges `PLATFORM_ADMIN`** | [`src/auth/auth-service.ts` L253-L451](../src/auth/auth-service.ts#L253-L451)<br>[`src/services/tenant-service.ts` L500-L785](../src/services/tenant-service.ts#L500-L785) | **`VÉRIFIÉ`** | Contrôle serveur des rôles et des 5 permissions par dossier (`VIEW`, `UPLOAD`, `EDIT_EXTRACTION`, `VALIDATE_ACCOUNTING`, `EXPORT`). Justification `PLATFORM_ADMIN` $\ge 10$ caractères exigée et tracée (`phase0.test.ts` #4). |
+| **3. Mots de passe & Sessions serveur** | [`src/auth/auth-service.ts` L37-L225](../src/auth/auth-service.ts#L37-L225) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | Hachage `scrypt` (`N=16384, r=8, p=1, keylen=64`) + `timingSafeEqual`. Jetons signés `HMAC-SHA256` et stockés hachés (`SHA-256`) dans `auth_sessions`. Révocation (`revokeSession`) et expiration (`expires_at`) testées (`phase1-readiness-and-postgres.test.ts` #5.3). |
+| **4. Cookies HTTP** | [`src/server.ts` L122-L128](../src/server.ts#L122-L128) | **`NON APPLICABLE`** | Aucun cookie n'est émis ; authentification par en-tête `Authorization: Bearer <token>`. |
+| **5. Secrets et configuration de production** | [`src/config/app-config.ts` L78-L115](../src/config/app-config.ts#L78-L115) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | `getAppConfig()` lève une erreur fatale `FATAL [SEC-OPEN-01]` si `NODE_ENV === "production"` et que `SESSION_SECRET` ou `SIGNED_URL_SECRET` est absent, $< 32$ caractères ou égal au secret de démo (`phase1-readiness-and-postgres.test.ts` #5.1). |
+| **6. Limitation de débit (*Rate Limiting*)** | [`src/server.ts` L43-L76 & L189-L197](../src/server.ts#L43-L76) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | Limiteur global (`180 req/min/IP`) + limiteur strict dédié à `POST /api/auth/login` (`10 req/min/IP` par défaut), purge des clés expirées et test automatisé `429` (`phase1-readiness-and-postgres.test.ts` #5.6). |
+| **7. Protection des documents privés & jetons signés** | [`src/auth/auth-service.ts` L456-L508](../src/auth/auth-service.ts#L456-L508)<br>[`src/services/tenant-service.ts` L873-L1006](../src/services/tenant-service.ts#L873-L1006) | **`PARTIELLEMENT VÉRIFIÉ`** | Liste blanche MIME, taille $\le 15\text{ Mo}$, nettoyage du nom de fichier, jetons `HMAC-SHA256` temporaires vérifiés en temps constant (`phase0.test.ts` #7 & #8). *Périmètre Phase 1* : branchement S3 WORM et route HTTP de téléchargement binaire. |
+| **8. Validation des entrées, en-têtes HTTP (`CSP`) & erreurs** | [`src/server.ts` L40-L41, L99-L117, L442-L455](../src/server.ts#L99-L117) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | Requêtes SQL 100 % préparées (`?`), corps JSON limité à 2 Mo, `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, et filtrage des erreurs SQL internes (`phase1-readiness-and-postgres.test.ts` #5.5). |
+| **9. Chaîne d'audit applicative `SHA-256` & Triggers SQL** | [`src/audit/audit-service.ts` L26-L170](../src/audit/audit-service.ts#L26-L170)<br>[`src/db/database.ts` L504-L516](../src/db/database.ts#L504-L516) | **`VÉRIFIÉ`** *(Corrigé en Lot 0.5)* | Chaînage cryptographique vérifié (`phase0.test.ts` #8) + triggers `BEFORE UPDATE` et `BEFORE DELETE` sur `audit_logs` en SQLite et PostgreSQL 16 (`phase1-readiness-and-postgres.test.ts` #4 & #5.2). |
+| **10. Sécurité IA & anti-prompt injection** | [`src/ai/ai-gateway.ts` L74-L185](../src/ai/ai-gateway.ts#L74-L185) | **`VÉRIFIÉ`** | Isolation `<UNTRUSTED_DOCUMENT_DATA_ONLY>`, détection de 7 motifs d'injection, statut forcé `NEEDS_HUMAN_REVIEW`, et blocage de `mock-deterministic` en `NODE_ENV=production` (`phase1-readiness-and-postgres.test.ts` #2). |
 
 ---
 
-## 3. Vulnérabilités Identifiées et Corrigées en Phase 0
+## 2. Historique des Remédiations de Sécurité (Phase 0 & Lot 0.5)
 
-| ID | Gravité | Problème identifié | Correction apportée | Statut |
-| :--- | :--- | :--- | :--- | :--- |
-| `SEC-FIX-01` | Moyenne | Échec d'enregistrement dans `audit_logs` (`FOREIGN KEY constraint failed`) lorsqu'un attaquant tente d'accéder à un `organizationId` ou `dossierId` qui n'existe pas en base. | Vérification préalable de l'existence de `organization_id` / `dossier_id` dans [`src/audit/audit-service.ts`](../src/audit/audit-service.ts) : si l'ID cible est fictif, `organization_id` est mis à `NULL` et l'ID tenté est conservé dans `metadata_json.unverifiedOrganizationId`. | **Corrigé & Testé** |
-| `SEC-FIX-02` | Élevée | Risque qu'en production l'adaptateur de test `mock-deterministic` soit utilisé par défaut si `AI_PROVIDER` n'est pas modifié. | Ajout de `isSimulatedTestAdapter: true` et de `assertAiProviderAllowedForEnvironment()` qui lève une exception bloquante si `NODE_ENV === "production"`. | **Corrigé & Testé** |
-
----
-
-## 4. Risques Restants et Mesures Correctives Planifiées (Phase 1 / Phase 2)
-
-1. **Limitation de débit (*Rate Limiting*) sur `/api/auth/login`** (*Gravité : Moyenne*) : ajouter un limiteur par IP et par compte (ex. blocage temporaire après 5 échecs consécutifs en 5 minutes) en Phase 1.
-2. **Validation de la robustesse des secrets en mode `production`** (*Gravité : Élevée*) : ajouter au démarrage du serveur en `NODE_ENV === "production"` une vérification interdisant les valeurs par défaut de `APP_SESSION_SECRET` et `APP_SIGNED_URL_SECRET`.
-3. **Protection CSRF par jeton ou cookie `SameSite=Strict`** (*Gravité : Faible actuellement car l'API utilise l'en-tête `Authorization: Bearer`*) : maintenir l'authentification par en-tête `Authorization` ou exiger un jeton anti-CSRF si des cookies de session sont ajoutés.
-4. **Ancrage externe du journal d'audit** (*Gravité : Moyenne*) : exporter périodiquement le dernier `integrity_hash` de `audit_logs` vers un stockage WORM externe en production.
+- **`SEC-FIX-01` (Moyenne — Corrigé en Lot 0.1)** : Préservation des traces d'audit lors d'une tentative d'accès sur un `organizationId` ou `dossierId` inexistant en base ([`src/audit/audit-service.ts`](../src/audit/audit-service.ts)).
+- **`SEC-FIX-02` (Élevée — Corrigé en Lot 0.3)** : Interdiction d'exécuter l'adaptateur simulé `mock-deterministic` lorsque `NODE_ENV === "production"` via `assertAiProviderAllowedForEnvironment()` ([`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts)).
+- **`SEC-OPEN-01` $\rightarrow$ `SEC-FIX-03` (Élevée — Corrigé & Testé en Lot 0.5)** : Refus de démarrage (`FATAL [SEC-OPEN-01]`) dans [`src/config/app-config.ts`](../src/config/app-config.ts) lorsque `NODE_ENV === "production"` et que `SESSION_SECRET` ou `SIGNED_URL_SECRET` est absent, $< 32$ caractères ou égal à un secret de démo.
+- **`SEC-OPEN-02` $\rightarrow$ `SEC-FIX-04` (Moyenne — Corrigé & Testé en Lot 0.5)** : Restriction de `GET /api/organizations/:orgId/audit-logs` au rôle `FIRM_ADMIN` (ou `PLATFORM_ADMIN` justifié) dans [`src/server.ts`](../src/server.ts#L390-L401).
+- **`SEC-OPEN-03` $\rightarrow$ `SEC-FIX-05` (Moyenne — Corrigé & Testé en Lot 0.5)** : Limiteur de débit dédié sur `POST /api/auth/login` (`10 req/min/IP` par défaut), éviction mémoire des clés expirées et tests automatisés de `429`, `revokeSession()` et `expires_at`.
+- **`SEC-OPEN-04` $\rightarrow$ `SEC-FIX-06` (Moyenne — Corrigé & Testé en Lot 0.5)** : Ajout des triggers SQL `BEFORE UPDATE` et `BEFORE DELETE` sur `audit_logs` dans SQLite (`trg_audit_logs_immutable_update`, `trg_audit_logs_immutable_delete`) et PostgreSQL 16 (`trg_pg_audit_logs_immutable`).
+- **`SEC-OPEN-05` $\rightarrow$ `SEC-FIX-07` (Faible — Corrigé & Testé en Lot 0.5)** : Ajout de l'en-tête `Content-Security-Policy` et filtrage des erreurs SQL internes dans `src/server.ts`.

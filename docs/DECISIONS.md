@@ -25,15 +25,15 @@ Ce document recense les décisions d'architecture structurantes prises lors de l
 - **Contexte** : Le nom **ComptaNova** est provisoire et doit pouvoir être modifié sans rechercher/remplacer dans tout le dépôt.
 - **Problème à résoudre** : Éviter toute dispersion du nom du produit ou des couleurs dans les vues et services.
 - **Options considérées** : Constantes dispersées vs fichier de configuration unique alimenté par les variables d'environnement.
-- **Décision retenue** : Centralisation dans [`src/config/app-config.ts`](../src/config/app-config.ts) (`APP_PRODUCT_NAME`, `APP_TAGLINE`, `theme`).
-- **Conséquences** : Changer `APP_PRODUCT_NAME` dans `.env` met à jour l'interface web, les en-têtes API et les métadonnées système.
+- **Décision retenue** : Centralisation dans [`src/config/app-config.ts`](../src/config/app-config.ts) (`APP_NAME`, `APP_TAGLINE`, `brandColors`). *(Note d'audit de clôture : `src/ui/app-view.ts` utilise actuellement des variables CSS bleu/ardoise en dur au lieu d'injecter `brandColors` — écart cosmétique tracé sous `REQ-002` dans `docs/PHASE0_CLOSURE_AUDIT.md`).*
+- **Conséquences** : Changer `APP_NAME` dans `.env` met à jour l'interface web, les en-têtes API et les métadonnées système.
 
 ---
 
 ## `ADR-0003` — Stratégie de base de données hybride : SQLite local (`WAL`) + Compatibilité vérifiée sur PostgreSQL 16
 - **Date** : 2026-10-18
 - **Statut** : Acceptée
-- **Contexte** : Le mode de développement local utilise SQLite (`./data/app.db`) pour permettre une exécution immédiate sans configuration complexe, tandis que la cible de production SaaS multi-tenant est **PostgreSQL 16+**. L'utilisateur a également installé PostgreSQL 16.15 en local (`psql -U postgres -h /tmp`).
+- **Contexte** : Le mode de développement local utilise SQLite (`./data/comptanova-dev.sqlite`) pour permettre une exécution immédiate sans configuration complexe, tandis que la cible de production SaaS multi-tenant est **PostgreSQL 16+**. L'utilisateur a également installé PostgreSQL 16.15 en local (`psql -U postgres -h /tmp`).
 - **Problème à résoudre** : Préserver la rapidité des tests en mémoire SQLite tout en prouvant que le schéma de 20 tables et les contraintes transactionnelles fonctionnent réellement sur PostgreSQL 16.
 - **Options considérées** :
   1. Utiliser uniquement SQLite sans tester PostgreSQL en Phase 0.
@@ -61,7 +61,7 @@ Ce document recense les décisions d'architecture structurantes prises lors de l
 - **Décision retenue** :
   1. Toutes les tables métier portent `organization_id NOT NULL` et `dossier_id`.
   2. Les gardes serveur `assertOrganizationAccess()` et `assertDossierAccess()` ([`src/auth/auth-service.ts`](../src/auth/auth-service.ts)) sont appelés avant toute lecture ou écriture.
-  3. L'accès d'un `PLATFORM_ADMIN` aux données d'une organisation cliente exige une justification écrite d'au moins 15 caractères et génère un événement d'audit critique.
+  3. L'accès d'un `PLATFORM_ADMIN` aux données d'une organisation cliente exige une justification écrite d'au moins 10 caractères (`justification.trim().length < 10`) et génère un événement d'audit critique `PLATFORM_ADMIN_SUPPORT_ACCESS`.
 
 ---
 
@@ -77,7 +77,7 @@ Ce document recense les décisions d'architecture structurantes prises lors de l
 - **Date** : 2026-10-18
 - **Statut** : Acceptée
 - **Contexte** : L'expansion internationale (Afrique de l'Ouest `XOF` à 0 décimale, Europe/Maghreb/CCG `EUR`/`MAD`/`AED` à 2 décimales, Tunisie/Bahreïn/Oman/Koweït `TND`/`BHD`/`OMR`/`KWD` à 3 décimales, Chili `CLF` à 4 décimales) interdit de supposer que toutes les devises ont 2 décimales ou d'utiliser des flottants binaires `number` pour les décimales.
-- **Décision retenue** : Stockage en unités mineures entières (`amountMinor`) accompagné systématiquement de `currency` et `minorUnitExponent` (`0 | 2 | 3 | 4`), calculs intermédiaires en `BigInt`, 4 modes d'arrondi (`HALF_UP`, `HALF_EVEN`, `FLOOR`, `CEILING`) et enregistrement complet d'`ExchangeRateAuditRecord` lors des conversions multi-devises ([`src/domain/money.ts`](../src/domain/money.ts)).
+- **Décision retenue** : Stockage en unités mineures entières (`amountMinor`) accompagné systématiquement de `currency` et `minorUnitExponent` (`0 | 2 | 3 | 4`), calculs intermédiaires en `BigInt`, 4 modes d'arrondi (`HALF_UP`, `HALF_EVEN`, `FLOOR`, `CEILING`) et enregistrement complet d'`ExchangeRateAuditRecord` lors des conversions multi-devises ([`src/domain/money.ts`](../src/domain/money.ts), 20 devises enregistrées dans `CURRENCY_DEFINITIONS`).
 
 ---
 
@@ -88,7 +88,7 @@ Ce document recense les décisions d'architecture structurantes prises lors de l
 - **Décision retenue** :
   - Niveau A : Cœur métier sans aucun taux ni seuil en dur (vérifié par le test statique n° 7 de `international-scope.test.ts`).
   - Niveau B : Registre versionné par `versionId` et plage de dates d'effet (`effectiveFrom`, `effectiveTo`).
-  - Niveau C : 13 packs pays pré-configurés, dont seule la France (`FR-2026.1.0`) est activée pour le MVP ; les 12 autres sont bloqués en production par `assertCanActivateJurisdictionForProduction()`.
+  - Niveau C : **8 versions de configuration couvrant 7 pays** dans [`src/countries/country-registry.ts`](../src/countries/country-registry.ts) (`FR` [2 versions : `FR-2025.1-HISTORICAL` (`OBSOLETE`) et `FR-2026.1-REV0` (`PENDING_LEGAL_VALIDATION`)], `BE`, `LU`, `CH`, `MA`, `TN`, `AE` [`DRAFT_INCOMPLETE`]). Toutes ont `isProductionEnabled: false` par défaut tant que la validation fiscale formelle n'est pas signée, et sont bloquées en production par `assertCanActivateJurisdictionForProduction()`.
 
 ---
 

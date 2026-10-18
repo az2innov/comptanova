@@ -34,17 +34,17 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
   <title>${escapedAppName} — International Multi-Tenant &amp; Multi-Jurisdiction SaaS</title>
   <style>
     :root {
-      --bg-app: #f4f6f9;
+      --bg-app: ${appConfig.brandColors.surfaceOffWhite};
       --bg-surface: #ffffff;
-      --bg-sidebar: #0f172a;
-      --text-main: #0f172a;
+      --bg-sidebar: ${appConfig.brandColors.primaryDeepEmerald};
+      --text-main: ${appConfig.brandColors.textGraphite};
       --text-muted: #475569;
       --border-color: #e2e8f0;
-      --primary: #1d4ed8;
-      --primary-hover: #1e40af;
+      --primary: ${appConfig.brandColors.primaryDeepEmerald};
+      --primary-hover: ${appConfig.brandColors.secondaryJade};
       --ai-badge-bg: #fef3c7;
       --ai-badge-text: #92400e;
-      --ai-badge-border: #f59e0b;
+      --ai-badge-border: ${appConfig.brandColors.accentWarmAmber};
       --valid-badge-bg: #dcfce7;
       --valid-badge-text: #166534;
       --valid-badge-border: #22c55e;
@@ -60,7 +60,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       line-height: 1.5;
     }
     .regulatory-banner {
-      background: #1e293b;
+      background: ${appConfig.brandColors.primaryDeepEmerald};
       color: #f8fafc;
       font-size: 0.82rem;
       padding: 0.55rem 1.25rem;
@@ -68,7 +68,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       justify-content: space-between;
       align-items: center;
       gap: 1rem;
-      border-bottom: 2px solid #f59e0b;
+      border-bottom: 2px solid ${appConfig.brandColors.accentWarmAmber};
     }
     .layout {
       display: grid;

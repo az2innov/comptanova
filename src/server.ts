@@ -8,6 +8,7 @@ import {
   authenticateUser,
   resolveSessionByToken,
   revokeSession,
+  assertOrganizationAccess,
   AuthorizationError,
 } from "./auth/auth-service.js";
 import {
@@ -33,18 +34,35 @@ import { CurrencyCode } from "./domain/money.js";
 
 /**
  * Serveur HTTP et API RESTful sécurisée (Étape 0.4, 0.6, 0.7 & Extension Internationale).
- * - Limitation de débit (Rate Limiting) en mémoire par adresse IP.
- * - En-têtes de sécurité HTTP (X-Content-Type-Options, X-Frame-Options, Referrer-Policy).
+ * - Limitation de débit (Rate Limiting) en mémoire par adresse IP avec purge des clés expirées et quota strict sur `/api/auth/login`.
+ * - En-têtes de sécurité HTTP (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Content-Security-Policy).
  * - Support de la langue demandée (`?lang=ar|en|fr` ou `Accept-Language`) et des paramètres multi-juridictions.
  */
 
+const DEFAULT_CSP_HEADER =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'";
+
 const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(ip: string, maxRequestsPerMinute: number = 180): boolean {
+export function resetRateLimitBucketsForTests(): void {
+  rateLimitBuckets.clear();
+}
+
+function evictExpiredRateLimitBuckets(now: number): void {
+  if (rateLimitBuckets.size < 256) return;
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (now > bucket.resetAt) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function checkRateLimit(key: string, maxRequestsPerMinute: number = 180): boolean {
   const now = Date.now();
-  const bucket = rateLimitBuckets.get(ip);
+  evictExpiredRateLimitBuckets(now);
+  const bucket = rateLimitBuckets.get(key);
   if (!bucket || now > bucket.resetAt) {
-    rateLimitBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + 60_000 });
     return true;
   }
   bucket.count += 1;
@@ -96,6 +114,7 @@ function sendJson(
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Content-Security-Policy": DEFAULT_CSP_HEADER,
     "Cache-Control": "no-store",
   });
   res.end(body);
@@ -109,10 +128,21 @@ function extractBearerToken(req: http.IncomingMessage): string | null {
   return authHeader.slice("Bearer ".length).trim();
 }
 
-export function createAppServer(db: DatabaseSync = getDatabase()): http.Server {
+export interface AppServerOptions {
+  maxRequestsPerMinute?: number;
+  maxLoginRequestsPerMinute?: number;
+}
+
+export function createAppServer(
+  db: DatabaseSync = getDatabase(),
+  options: AppServerOptions = {}
+): http.Server {
+  const maxRequestsPerMinute = options.maxRequestsPerMinute ?? 180;
+  const maxLoginRequestsPerMinute = options.maxLoginRequestsPerMinute ?? 10;
+
   return http.createServer(async (req, res) => {
     const ip = req.socket.remoteAddress || "127.0.0.1";
-    if (!checkRateLimit(ip)) {
+    if (!checkRateLimit(`global:${ip}`, maxRequestsPerMinute)) {
       sendJson(res, 429, { error: "Trop de requêtes. Veuillez réessayer dans une minute." });
       return;
     }
@@ -133,6 +163,8 @@ export function createAppServer(db: DatabaseSync = getDatabase()): http.Server {
           "Content-Type": "text/html; charset=utf-8",
           "X-Content-Type-Options": "nosniff",
           "X-Frame-Options": "DENY",
+          "Referrer-Policy": "strict-origin-when-cross-origin",
+          "Content-Security-Policy": DEFAULT_CSP_HEADER,
         });
         res.end(html);
         return;
@@ -153,8 +185,14 @@ export function createAppServer(db: DatabaseSync = getDatabase()): http.Server {
         return;
       }
 
-      // 3. Authentification : Connexion
+      // 3. Authentification : Connexion (avec limitation de débit spécifique anti-brute-force)
       if (method === "POST" && pathname === "/api/auth/login") {
+        if (!checkRateLimit(`login:${ip}`, maxLoginRequestsPerMinute)) {
+          sendJson(res, 429, {
+            error: "Trop de tentatives de connexion. Veuillez patienter une minute.",
+          });
+          return;
+        }
         const body = await readJsonBody(req);
         const email = String(body.email || "");
         const password = String(body.password || "");
@@ -350,9 +388,10 @@ export function createAppServer(db: DatabaseSync = getDatabase()): http.Server {
         }
 
         if (method === "GET" && subRoute === "audit-logs") {
-          getOrganizationDashboardMetrics({
+          assertOrganizationAccess({
             session,
             organizationId: orgId,
+            allowedRoles: ["FIRM_ADMIN"],
             platformAdminJustification,
             db,
           });
@@ -406,8 +445,14 @@ export function createAppServer(db: DatabaseSync = getDatabase()): http.Server {
         sendJson(res, err.statusCode, { error: err.message });
         return;
       }
-      const message = err instanceof Error ? err.message : "Erreur interne du serveur.";
-      sendJson(res, 400, { error: message });
+      const rawMessage =
+        err instanceof Error ? err.message : "Erreur interne du serveur.";
+      const isInternalDbError =
+        /SQLITE_|syntax error|near "|constraint failed/i.test(rawMessage);
+      const safeMessage = isInternalDbError
+        ? "Requête invalide ou contrainte d'intégrité non respectée."
+        : rawMessage;
+      sendJson(res, 400, { error: safeMessage });
     }
   });
 }

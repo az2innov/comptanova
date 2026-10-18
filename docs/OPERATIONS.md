@@ -24,11 +24,11 @@ Ce document fournit les instructions vérifiées pour installer, configurer, lan
    cp .env.example .env
    ```
    Principales variables définies dans [`.env.example`](../.env.example) et lues par [`src/config/app-config.ts`](../src/config/app-config.ts) :
-   - `APP_PRODUCT_NAME=ComptaNova` (nom du produit centralisé et remplaçable).
+   - `APP_NAME=ComptaNova` (nom du produit centralisé et remplaçable).
    - `PORT=3000` / `HOST=127.0.0.1`.
-   - `SQLITE_DB_PATH=./data/app.db`.
-   - `APP_SESSION_SECRET` et `APP_SIGNED_URL_SECRET` (secrets HMAC à remplacer impérativement en production).
-   - `AI_PROVIDER=mock-deterministic` (mode simulé de test local ; interdit lorsque `NODE_ENV=production`).
+   - `DATABASE_PATH=./data/comptanova-dev.sqlite` (chemin du fichier SQLite en mode développement).
+   - `SESSION_SECRET` et `SIGNED_URL_SECRET` (secrets HMAC d'au moins 32 caractères ; attention : voir `SEC-OPEN-01` dans `docs/SECURITY_REVIEW.md` concernant le blocage de démarrage en production si absents).
+   - `AI_DEFAULT_PROVIDER=mock-deterministic` (mode simulé de test local ; interdit lorsque `NODE_ENV=production`).
 
 ---
 

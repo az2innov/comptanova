@@ -1,73 +1,58 @@
-# ÉTAT GÉNÉRAL DU PROJET — ComptaNova (Nom Provisoire et Configurable)
+# ÉTAT GÉNÉRAL DU PROJET (`PROJECT_STATUS.md`) — ComptaNova
 
-- **Date de dernière mise à jour** : 2026-10-18T14:10:00+01:00
-- **Phase en cours** : **Phase 0 — Audit, Architecture, Fondations, Sécurité et Traçabilité Complète** (Terminée et vérifiée — Prête pour le lancement de la Phase 1)
-- **Statut global de la Phase 0** : **Phase 0 validée sous réserves documentées** *(100 % des fondations techniques et des 21 tests automatisés passent sur SQLite et PostgreSQL 16.15 ; les validations juridiques, fiscales et RGPD externes sont tracées comme réserves pré-commercialisation dans [`docs/LEGAL_AND_COMPLIANCE_CHECKLIST.md`](./LEGAL_AND_COMPLIANCE_CHECKLIST.md))*.
+- **Date de dernière mise à jour** : 2026-10-18T15:27:00+01:00
+- **Phase auditée** : **Phase 0 — Audit Indépendant de Clôture, Architecture, Sécurité et Traçabilité**
+- **Référence Git** : Branche `main` (`https://github.com/az2innov/comptanova.git`, commit initial `430bc22`)
+- **Statut global de la Phase 0** : **Phase 0 validée sous réserves documentées** (voir [`docs/PHASE0_CLOSURE_AUDIT.md`](./PHASE0_CLOSURE_AUDIT.md)).
 
 ---
 
-## 1. Fonctionnalités Opérationnelles (Implémentées et Testées)
+## 1. Fonctionnalités Opérationnelles (`VÉRIFIÉ`)
 
-1. **Configuration centralisée et identité produit configurable** ([`src/config/app-config.ts`](../src/config/app-config.ts), [`.env.example`](../.env.example)) :
-   - Le nom du produit (`ComptaNova`), le slogan, les jetons de design (`#153D35`, `#237D68`, `#F7F8FA`, `#FFFFFF`, `#17212B`, `#64748B`, `#E2E8F0`, `#D9A441`) et les paramètres de sécurité sont centralisés dans une source unique.
-2. **Authentification serveur et gestion des sessions** ([`src/auth/auth-service.ts`](../src/auth/auth-service.ts)) :
-   - Hachage des mots de passe par `crypto.scryptSync` avec sel aléatoire de 16 octets et comparaison en temps constant (`crypto.timingSafeEqual`).
-   - Jetons de session signés par `HMAC-SHA256`, stockés sous forme d'empreinte `SHA-256` dans la table `auth_sessions`, avec expiration, révocation et contexte d'organisation active.
-3. **Isolation Multi-Tenant et contrôle d'accès granulaire (RBAC) côté serveur** ([`src/auth/auth-service.ts`](../src/auth/auth-service.ts), [`src/services/tenant-service.ts`](../src/services/tenant-service.ts)) :
-   - 4 rôles (`PLATFORM_ADMIN`, `FIRM_ADMIN`, `ACCOUNTANT_COLLABORATOR`, `CLIENT_DIRECTOR`).
-   - Cloisonnement strict par `organization_id` sur toutes les requêtes et affectation granulaire par dossier (`can_view`, `can_upload`, `can_edit_extraction`, `can_validate_accounting`, `can_export`).
-   - Accès `PLATFORM_ADMIN` aux données d'un tenant conditionné à une justification écrite d'au moins 15 caractères, systématiquement journalisée.
+1. **Identité produit centralisée (`APP_NAME="ComptaNova"`)** ([`src/config/app-config.ts`](../src/config/app-config.ts), [`.env.example`](../.env.example)).
+2. **Authentification serveur (`scrypt`) et sessions signées (`HMAC-SHA256`)** ([`src/auth/auth-service.ts`](../src/auth/auth-service.ts)).
+3. **Isolation Multi-Tenant (`organization_id`) et contrôle d'accès par dossier (`dossier_assignments`)** ([`src/auth/auth-service.ts`](../src/auth/auth-service.ts), [`src/services/tenant-service.ts`](../src/services/tenant-service.ts)) avec justification minimale de **10 caractères** exigée pour tout accès `PLATFORM_ADMIN`.
 4. **Moteur monétaire international exact sans flottants IEEE-754** ([`src/domain/money.ts`](../src/domain/money.ts)) :
-   - Calculs en unités mineures entières (`BigInt` / `safeInteger`) supportant explicitement les devises à **0 décimale** (`XOF`, `XAF`, `JPY`), **2 décimales** (`EUR`, `CHF`, `USD`, `GBP`, `MAD`, `DZD`, `AED`, `SAR`, `QAR`, `CAD`, `AUD`, `SGD`), **3 décimales** (`TND`, `BHD`, `OMR`, `KWD`) et **4 décimales** (`CLF`).
-   - Support des montants négatifs (avoirs / notes de crédit), de 4 modes d'arrondi (`HALF_UP`, `HALF_EVEN`, `FLOOR`, `CEILING`), des conversions multi-devises avec piste d'audit (`convertCurrencyWithAudit`) et du calcul des écarts de change (`computeRealizedExchangeDifference`).
-5. **Architecture réglementaire multi-juridictions à 3 niveaux** ([`src/countries/country-registry.ts`](../src/countries/country-registry.ts)) :
-   - Séparation stricte entre Cœur métier international (Niveau A), Couche de configuration par juridiction (Niveau B) et Packs réglementaires versionnés (Niveau C).
-   - 13 juridictions pré-enregistrées : `FR` (seule active par défaut), `BE`, `LU`, `CH`, `MA`, `TN`, `DZ`, `AE`, `SA`, `QA`, `BH`, `OM`, `KW` (verrouillées en statut `IN_REVIEW` ou `DRAFT` avec `isProductionEnabled: false`).
-6. **Moteur de règles comptables déterministe** ([`src/rules/deterministic-engine.ts`](../src/rules/deterministic-engine.ts)) :
-   - Vérification exacte $\text{HT} + \text{TVA} = \text{TTC}$, cohérence des taux en points de base, équilibre Débit = Crédit, et simulations indicatives horodatées avec hypothèses et avertissement non opposable.
-7. **Journal d'audit applicatif chaîné par SHA-256** ([`src/audit/audit-service.ts`](../src/audit/audit-service.ts)) :
-   - Enregistrement append-only avec chaînage cryptographique (`previous_hash` $\rightarrow$ `integrity_hash`) et fonction de vérification d'intégrité `verifyAuditChainIntegrity()`.
-8. **Modèle de données Phase 0 + Phase 1 (20 tables) et migrations reproductibles** ([`src/db/database.ts`](../src/db/database.ts), [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts)) :
-   - 3 migrations versionnées (`001_phase0_foundations`, `002_international_scope_extension`, `003_phase1_readiness_schema`) appliquées sur SQLite et testées en conditions réelles sur **PostgreSQL 16.15** (`psql -U postgres -h /tmp`).
-   - Fonction transactionnelle `recordMultiLineAccountingEntry()` imposant au moins 2 lignes et l'équilibre strict $\sum \text{Débit} = \sum \text{Crédit} > 0$.
-9. **Interface web initiale, API REST et internationalisation (`fr-FR`, `en-GB`, `ar-AE` RTL)** ([`src/server.ts`](../src/server.ts), [`src/ui/app-view.ts`](../src/ui/app-view.ts), [`src/i18n/translations.ts`](../src/i18n/translations.ts)).
+   - **20 devises** enregistrées avec exposant explicite : `0` décimale (`XOF`, `XAF`, `JPY`), `2` décimales (`EUR`, `CHF`, `USD`, `GBP`, `MAD`, `DZD`, `AED`, `SAR`, `QAR`, `CAD`, `AUD`, `SGD`), `3` décimales (`TND`, `BHD`, `OMR`, `KWD`) et `4` décimales (`CLF`).
+   - Support des avoirs négatifs, de 4 modes d'arrondi (`HALF_UP`, `HALF_EVEN`, `FLOOR`, `CEILING`), des conversions FX auditées (`convertCurrencyWithAudit`) et des écarts de change (`computeRealizedExchangeDifference`).
+5. **Architecture réglementaire à 3 niveaux et registre versionné par dates d'effet** ([`src/countries/country-registry.ts`](../src/countries/country-registry.ts)) :
+   - **8 versions couvrant 7 pays** (`FR` [2 versions : `FR-2025.1-HISTORICAL` (`OBSOLETE`) et `FR-2026.1-REV0` (`PENDING_LEGAL_VALIDATION`)], `BE`, `LU`, `CH`, `MA`, `TN`, `AE` [`DRAFT_INCOMPLETE`]).
+   - Aucune juridiction n'a `isProductionEnabled: true` tant qu'une validation professionnelle n'est pas enregistrée (`assertCanActivateJurisdictionForProduction`).
+6. **Moteur de règles comptables déterministe** ([`src/rules/deterministic-engine.ts`](../src/rules/deterministic-engine.ts)) : contrôle $\text{HT} + \text{TVA} = \text{TTC}$, équilibre Débit = Crédit, simulations indicatives.
+7. **Passerelle IA hybride anti-injection et garde de production** ([`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts)) : isolation `<UNTRUSTED_DOCUMENT_DATA_ONLY>`, statut forcé `PROPOSED_BY_AI` / `NEEDS_HUMAN_REVIEW`, et blocage de `mock-deterministic` en `NODE_ENV=production`.
+8. **Modèle de données Phase 0 + Phase 1 (20 tables) et migrations reproductibles (`001`, `002`, `003`)** ([`src/db/database.ts`](../src/db/database.ts), [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts)) : testé sur SQLite et sur **PostgreSQL 16.15** réel (`psql -U postgres -h /tmp`).
+9. **Interface web initiale et internationalisation (`fr-FR`, `en-GB`, `ar-AE` RTL)** ([`src/server.ts`](../src/server.ts), [`src/ui/app-view.ts`](../src/ui/app-view.ts), [`src/i18n/translations.ts`](../src/i18n/translations.ts)).
 
 ---
 
-## 2. Fonctionnalités Partielles
+## 2. Remédiations de Sécurité et UI Clôturées en Lot 0.5 (`VÉRIFIÉ`) & Périmètre Reporté à la Phase 1
 
-- **Stockage binaire des documents** : les métadonnées, l'empreinte `SHA-256`, la détection de doublons, le calcul de la date de rétention légale et les jetons de téléchargement signés `HMAC-SHA256` sont implémentés et testés ; l'écriture binaire vers un bucket S3 distant WORM reste à connecter en Phase 1/2.
-- **Adaptation du runtime applicatif à PostgreSQL** : le schéma complet de 20 tables et les requêtes SQL transactionnelles sont testés et validés sur PostgreSQL 16.15 local ; les services TypeScript utilisent `node:sqlite` par défaut en mode local en attendant l'introduction du pool `pg` asynchrone.
-
----
-
-## 3. Fonctionnalités Simulées (Identifiées Explicitement)
-
-- **Adaptateur d'extraction IA `mock-deterministic`** ([`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts)) :
-  - Porte le drapeau `isSimulatedTestAdapter: true` et la mention explicite `MODE SIMULÉ DE TEST (mock-deterministic)`.
-  - Son exécution est **bloquée par code** lorsque `NODE_ENV === "production"` via `assertAiProviderAllowedForEnvironment()`.
+1. **`SEC-OPEN-01` $\rightarrow$ `VÉRIFIÉ`** : `getAppConfig()` dans [`src/config/app-config.ts`](../src/config/app-config.ts) lève désormais une exception fatale `FATAL [SEC-OPEN-01]` si `NODE_ENV === "production"` et que `SESSION_SECRET` ou `SIGNED_URL_SECRET` est absent, $< 32$ caractères ou égal à un secret de démo.
+2. **`SEC-OPEN-02` $\rightarrow$ `VÉRIFIÉ`** : `GET /api/organizations/:orgId/audit-logs` dans [`src/server.ts`](../src/server.ts) exige désormais le rôle `FIRM_ADMIN` (ou `PLATFORM_ADMIN` justifié).
+3. **`SEC-OPEN-03` $\rightarrow$ `VÉRIFIÉ`** : Limiteur de débit spécifique sur `POST /api/auth/login` (`10 req/min/IP` par défaut), purge des clés expirées et tests automatisés de `revokeSession()`, `expires_at` et HTTP `429`.
+4. **`SEC-OPEN-04` $\rightarrow$ `VÉRIFIÉ`** : Triggers SQL `BEFORE UPDATE` et `BEFORE DELETE` ajoutés sur `audit_logs` en SQLite et PostgreSQL 16.
+5. **`SEC-OPEN-05` & `REQ-002` $\rightarrow$ `VÉRIFIÉ`** : En-tête `Content-Security-Policy` ajouté, erreurs SQL internes filtrées et palette officielle (`#153D35` / `#237D68` / `#D9A441` / `#F6F8F7` / `#111827`) injectée dans `src/ui/app-view.ts`.
+6. **Stockage binaire des documents et routes HTTP associées (`PARTIELLEMENT VÉRIFIÉ` — Périmètre Phase 1)** : l'ingestion SQLite (`ingestDocumentIntoDossier`) et les jetons signés `HMAC-SHA256` sont testés au niveau service ; l'écriture binaire sur disque/S3 et les routes HTTP d'upload/download seront exposées en Phase 1.
 
 ---
 
-## 4. Fonctionnalités Absentes (Volontairement Reportées à la Phase 1)
+## 3. Fonctionnalités Simulées (`VÉRIFIÉ`)
 
-- Import opérationnel de listings de factures CSV/Excel (tables `import_batches` et `invoices` prêtes).
-- Interface de saisie comptable manuelle multi-lignes (table `accounting_entry_lines` et fonction `recordMultiLineAccountingEntry()` prêtes).
-- Import opérationnel de relevés bancaires CSV/OFX et moteur de rapprochement bancaire (tables `bank_transactions` et `reconciliation_links` prêtes).
-- Génération et téléchargement de l'export FEC France (tables `accounting_entries` et `accounting_entry_lines` prêtes).
+- **Adaptateur `mock-deterministic`** ([`src/ai/ai-gateway.ts`](../src/ai/ai-gateway.ts)) : clairement identifié par `isSimulatedTestAdapter: true` et `simulationNotice`, et interdit en `NODE_ENV=production`.
 
 ---
 
-## 5. Blocages et Risques Majeurs
+## 4. Fonctionnalités Absentes (Reportées à la Phase 1)
 
-- **Aucun blocage technique** pour démarrer la Phase 1.
-- **Blocages réglementaires pré-production (attendus)** : validation par un expert-comptable inscrit à l'OEC, consultation juridique sur le périmètre d'assistance technique, test de l'export FEC avec *Test Compta Demat* (DGFiP), et validation RGPD/DPA/AIPD par un DPO (voir [`docs/LEGAL_AND_COMPLIANCE_CHECKLIST.md`](./LEGAL_AND_COMPLIANCE_CHECKLIST.md) et [`docs/RISK_REGISTER.md`](./RISK_REGISTER.md)).
+- Import opérationnel de listings de factures CSV/Excel, interface de saisie comptable multi-lignes, import bancaire CSV/OFX, rapprochement bancaire et export FEC (les 8 tables correspondantes sont déjà créées et testées en base).
 
 ---
 
-## 6. Prochaines Actions (Entrée en Phase 1 — MVP Opérationnel France)
+## 5. Décisions de Passage (Section 9 de l'Audit de Clôture — Après Lot 0.5)
 
-1. Implémenter l'import de listings de factures CSV/Excel avec prévisualisation, détection de doublons via `import_batches` et rapport d'erreurs par ligne.
-2. Connecter la saisie et la génération d'écritures comptables multi-lignes (`recordMultiLineAccountingEntry`) à l'interface et à l'API REST.
-3. Implémenter l'import bancaire CSV/OFX et le rapprochement bancaire assisté avec validation humaine obligatoire.
-4. Implémenter l'export préparatoire au format FEC France et les rapports de gestion/TVA indicatifs.
+| Décision | Statut | Condition / Justification |
+| :--- | :--- | :--- |
+| **A. Poursuivre le développement de la Phase 1** | **OUI (`AUTORISÉ`)** | Socle technique, sécurité (`SEC-OPEN-01` à `05` corrigés), monétaire et base de données (20 tables SQLite + PG16) validé par **22/22 tests**. |
+| **B. Tests d'intégration avec données fictives** | **OUI (`AUTORISÉ`)** | Fonctionnel immédiatement en local (`seedDemoData` + `mock-deterministic`). |
+| **C. Utilisation de données comptables réelles hors production** | **SOUS CONDITIONS** | Prérequis techniques levés en Lot 0.5 ; requiert la configuration d'un `.env` local avec secrets forts, une sauvegarde chiffrée et le cadre RGPD. |
+| **D. Mise en production commerciale** | **NON (`BLOQUÉ`)** | Requiert la réalisation des Phases métier 1–4, l'infrastructure cloud (PG16 managé + S3 WORM) et les validations professionnelles externes (`LEGAL_AND_COMPLIANCE_CHECKLIST.md`). |
