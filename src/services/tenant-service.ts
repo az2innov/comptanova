@@ -23,9 +23,17 @@ import {
   assertDossierAccess,
   hashPassword,
   AuthorizationError,
+  generateSignedDocumentDownloadToken,
+  verifySignedDocumentDownloadToken,
 } from "../auth/auth-service.js";
 import { recordAuditLog } from "../audit/audit-service.js";
 import { DeterministicMockAiAdapter } from "../ai/ai-gateway.js";
+import {
+  validateFileBuffer,
+  sanitizeFilename,
+  scanFileSafety,
+  defaultDocumentStorage,
+} from "./file-security.js";
 
 /**
  * Services métier de la Phase 0 & Extension Internationale.
@@ -1585,6 +1593,14 @@ export function listDossiersForOrganization(params: {
   return rows.map(mapClientDossierRow);
 }
 
+export interface IngestionResult {
+  document: StoredDocument;
+  duplicateDetected: boolean;
+  duplicateType?: "EXACT_SHA256" | "HEURISTIC" | null;
+  conflictingDocumentId?: string;
+  heuristicWarning?: string;
+}
+
 export async function ingestDocumentIntoDossier(params: {
   session: AuthenticatedSessionContext | null;
   organizationId: string;
@@ -1593,8 +1609,10 @@ export async function ingestDocumentIntoDossier(params: {
   mimeType: string;
   contentBuffer: Buffer;
   category?: DocumentCategory;
+  allowDuplicateOverride?: boolean;
+  overrideReason?: string;
   db?: DatabaseSync;
-}): Promise<{ document: StoredDocument; duplicateDetected: boolean }> {
+}): Promise<IngestionResult> {
   const db = params.db ?? getDatabase();
   assertDossierAccess({
     session: params.session,
@@ -1604,14 +1622,43 @@ export async function ingestDocumentIntoDossier(params: {
     db,
   });
 
-  const allowedMimes = ["application/pdf", "image/png", "image/jpeg", "text/csv"];
-  if (!allowedMimes.includes(params.mimeType)) {
-    throw new Error(`Type MIME non autorisé : ${params.mimeType}`);
-  }
-  if (params.contentBuffer.byteLength === 0 || params.contentBuffer.byteLength > 15 * 1024 * 1024) {
-    throw new Error("Taille de fichier invalide (doit être comprise entre 1 octet et 15 Mo).");
+  // 1. Validation de sécurité du fichier (octets magiques, taille 1o - 15Mo, extensions interdites)
+  const validation = validateFileBuffer(
+    params.contentBuffer,
+    params.mimeType,
+    params.originalFilename
+  );
+
+  const safeFilename = sanitizeFilename(params.originalFilename);
+
+  // 2. Scan de sécurité antimalware
+  const scanResult = await scanFileSafety(params.contentBuffer, safeFilename);
+  if (!scanResult.isClean) {
+    recordAuditLog(
+      {
+        organizationId: params.organizationId,
+        dossierId: params.dossierId,
+        actorUserId: params.session?.user.id ?? null,
+        actorRole: "AUTHENTICATED_USER",
+        action: "MALWARE_PAYLOAD_DETECTED_UPLOAD_REJECTED",
+        targetEntityType: "DOCUMENT",
+        targetEntityId: null,
+        justification: `Fichier rejeté : menace ${scanResult.threatName}`,
+        metadata: {
+          originalFilename: params.originalFilename,
+          sanitizedFilename: safeFilename,
+          threatName: scanResult.threatName,
+          engine: scanResult.scannerEngine,
+        },
+      },
+      db
+    );
+    throw new Error(
+      `Fichier rejeté par la sécurité : menace détectée (${scanResult.threatName}).`
+    );
   }
 
+  // 3. Empreinte SHA-256 et détection de doublon exact
   const sha256Checksum = crypto
     .createHash("sha256")
     .update(params.contentBuffer)
@@ -1619,49 +1666,115 @@ export async function ingestDocumentIntoDossier(params: {
 
   const existingDuplicate = db
     .prepare(
-      "SELECT id FROM documents WHERE organization_id = ? AND dossier_id = ? AND sha256_checksum = ?"
+      "SELECT id, original_filename, created_at FROM documents WHERE organization_id = ? AND dossier_id = ? AND sha256_checksum = ?"
     )
     .get(params.organizationId, params.dossierId, sha256Checksum) as
-    | { id: string }
+    | { id: string; original_filename: string; created_at: string }
     | undefined;
 
+  let duplicateDetected = Boolean(existingDuplicate);
+  let duplicateType: "EXACT_SHA256" | "HEURISTIC" | null = existingDuplicate
+    ? "EXACT_SHA256"
+    : null;
+  let conflictingDocumentId: string | undefined = existingDuplicate?.id;
+  let heuristicWarning: string | undefined;
+
+  // 4. Dossier et rétention légale
   const dossierRow = db
-    .prepare("SELECT country_config_version_id, country_code FROM client_dossiers WHERE id = ?")
+    .prepare(
+      "SELECT country_config_version_id, country_code FROM client_dossiers WHERE id = ?"
+    )
     .get(params.dossierId) as { country_config_version_id: string; country_code: string };
 
   const countryCfg = getCountryConfigurationByVersionId(
     dossierRow.country_config_version_id,
     db
   );
-  const retentionYear = new Date().getUTCFullYear() + countryCfg.statutoryRetentionYears;
+  const retentionYear =
+    new Date().getUTCFullYear() + countryCfg.statutoryRetentionYears;
   const retentionUntilDate = `${retentionYear}-12-31`;
 
+  // 5. Stockage privé sécurisé
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const storageKey = `${params.organizationId}/${params.dossierId}/${id}-${safeFilename}`;
+
+  await defaultDocumentStorage.saveFile(storageKey, params.contentBuffer);
+
+  // 6. Extraction OCR / IA assistée (déterministe test avec isolation anti-injection)
   const aiAdapter = new DeterministicMockAiAdapter();
   const { extraction, metadata } = await aiAdapter.extractInvoiceData({
     organizationId: params.organizationId,
     dossierId: params.dossierId,
-    filename: params.originalFilename,
-    mimeType: params.mimeType,
+    filename: safeFilename,
+    mimeType: validation.detectedMimeType,
     rawTextContent: params.contentBuffer.toString("utf-8"),
   });
 
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const storageKey = `${params.organizationId}/${params.dossierId}/${id}-${params.originalFilename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  // 7. Détection de doublon heuristique (même tiers, même date, même montant TTC)
+  let heuristicDuplicateOfId: string | null = null;
+  let overrideDuplicateReason: string | null = null;
 
+  if (!duplicateDetected) {
+    const candidateGross = extraction.grossAmountMinor?.value;
+    const candidateDate = extraction.invoiceDate?.value;
+    const candidateIssuer = extraction.issuerName?.value;
+
+    if (candidateGross && candidateDate && candidateIssuer) {
+      const existingDocs = db
+        .prepare(
+          "SELECT id, original_filename, extracted_data_json FROM documents WHERE organization_id = ? AND dossier_id = ? AND workflow_status != 'REJECTED'"
+        )
+        .all(params.organizationId, params.dossierId) as Array<{
+        id: string;
+        original_filename: string;
+        extracted_data_json: string;
+      }>;
+
+      for (const d of existingDocs) {
+        try {
+          const parsed = JSON.parse(d.extracted_data_json);
+          const ext = parsed.extraction;
+          if (
+            ext &&
+            ext.invoiceDate?.value === candidateDate &&
+            ext.grossAmountMinor?.value === candidateGross
+          ) {
+            duplicateDetected = true;
+            duplicateType = "HEURISTIC";
+            conflictingDocumentId = d.id;
+            heuristicDuplicateOfId = d.id;
+            heuristicWarning = `Suspicion de doublon heuristique : document ${d.original_filename} (${d.id}) a la même date (${candidateDate}) et le même montant (${(candidateGross / 100).toFixed(2)} €).`;
+            break;
+          }
+        } catch {
+          // ignore parsing error on legacy document
+        }
+      }
+    }
+  }
+
+  // Traitement du dépassement de doublon si autorisé et justifié
+  if (duplicateDetected && params.allowDuplicateOverride && params.overrideReason) {
+    overrideDuplicateReason = params.overrideReason.trim();
+  }
+
+  // 8. Insertion en base de données avec statut PENDING_REVIEW
   db.prepare(
     `INSERT INTO documents (
       id, organization_id, dossier_id, original_filename, mime_type,
       size_bytes, sha256_checksum, storage_key, category, workflow_status,
       extracted_data_json, ai_model_version, rule_version_id, uploaded_by_user_id,
-      validated_by_user_id, validated_at, retention_until_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`
+      validated_by_user_id, validated_at, rejection_reason, rejected_by_user_id, rejected_at,
+      override_duplicate_reason, heuristic_duplicate_of_id, quarantine_status,
+      retention_until_date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, 'CLEAN', ?, ?, ?)`
   ).run(
     id,
     params.organizationId,
     params.dossierId,
-    params.originalFilename,
-    params.mimeType,
+    safeFilename,
+    validation.detectedMimeType,
     params.contentBuffer.byteLength,
     sha256Checksum,
     storageKey,
@@ -1670,10 +1783,835 @@ export async function ingestDocumentIntoDossier(params: {
     metadata.modelName,
     dossierRow.country_config_version_id,
     params.session!.user.id,
+    overrideDuplicateReason,
+    heuristicDuplicateOfId,
     retentionUntilDate,
     now,
     now
   );
+
+  // 9. Journal d'audit inaltérable
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: params.session!.user.id,
+      actorRole: "AUTHENTICATED_USER",
+      action: overrideDuplicateReason
+        ? "DOCUMENT_INGESTED_WITH_DUPLICATE_OVERRIDE"
+        : "DOCUMENT_INGESTED_PENDING_HUMAN_REVIEW",
+      targetEntityType: "DOCUMENT",
+      targetEntityId: id,
+      justification: overrideDuplicateReason,
+      metadata: {
+        filename: safeFilename,
+        sha256Checksum,
+        duplicateDetected,
+        duplicateType,
+        conflictingDocumentId,
+        heuristicWarning,
+        promptInjectionDetected: metadata.promptInjectionDetected,
+      },
+    },
+    db
+  );
+
+  const document: StoredDocument = {
+    id,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    originalFilename: safeFilename,
+    mimeType: validation.detectedMimeType,
+    sizeBytes: params.contentBuffer.byteLength,
+    sha256Checksum,
+    storageKey,
+    category: params.category ?? extraction.category.value,
+    workflowStatus: "PENDING_REVIEW",
+    extractedDataJson: JSON.stringify({ extraction, aiMetadata: metadata }),
+    aiModelVersion: metadata.modelName,
+    ruleVersionId: dossierRow.country_config_version_id,
+    uploadedByUserId: params.session!.user.id,
+    validatedByUserId: null,
+    validatedAt: null,
+    rejectionReason: null,
+    rejectedByUserId: null,
+    rejectedAt: null,
+    overrideDuplicateReason,
+    heuristicDuplicateOfId,
+    quarantineStatus: "CLEAN",
+    retentionUntilDate,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  return {
+    document,
+    duplicateDetected,
+    duplicateType,
+    conflictingDocumentId,
+    heuristicWarning,
+  };
+}
+
+export function listDossierDocuments(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  category?: string;
+  workflowStatus?: string;
+  searchQuery?: string;
+  limit?: number;
+  offset?: number;
+  db?: DatabaseSync;
+}): {
+  documents: StoredDocument[];
+  total: number;
+  countsByStatus: Record<string, number>;
+} {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VIEW",
+    db,
+  });
+
+  const conditions: string[] = ["organization_id = ?", "dossier_id = ?"];
+  const args: any[] = [params.organizationId, params.dossierId];
+
+  if (params.category && params.category !== "ALL") {
+    conditions.push("category = ?");
+    args.push(params.category);
+  }
+
+  if (params.workflowStatus && params.workflowStatus !== "ALL") {
+    conditions.push("workflow_status = ?");
+    args.push(params.workflowStatus);
+  }
+
+  if (params.searchQuery && params.searchQuery.trim()) {
+    conditions.push(
+      "(original_filename LIKE ? OR extracted_data_json LIKE ?)"
+    );
+    const like = `%${params.searchQuery.trim()}%`;
+    args.push(like, like);
+  }
+
+  const whereSql = conditions.join(" AND ");
+
+  const total = Number(
+    (
+      db
+        .prepare(`SELECT COUNT(*) AS c FROM documents WHERE ${whereSql}`)
+        .get(...args) as { c: number }
+    ).c
+  );
+
+  const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+  const offset = Math.max(Number(params.offset) || 0, 0);
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM documents WHERE ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    )
+    .all(...args, limit, offset) as any[];
+
+  const documents: StoredDocument[] = rows.map((r) => ({
+    id: r.id,
+    organizationId: r.organization_id,
+    dossierId: r.dossier_id,
+    originalFilename: r.original_filename,
+    mimeType: r.mime_type,
+    sizeBytes: Number(r.size_bytes),
+    sha256Checksum: r.sha256_checksum,
+    storageKey: r.storage_key,
+    category: r.category,
+    workflowStatus: r.workflow_status,
+    extractedDataJson: r.extracted_data_json,
+    aiModelVersion: r.ai_model_version,
+    ruleVersionId: r.rule_version_id,
+    uploadedByUserId: r.uploaded_by_user_id,
+    validatedByUserId: r.validated_by_user_id,
+    validatedAt: r.validated_at,
+    rejectionReason: r.rejection_reason,
+    rejectedByUserId: r.rejected_by_user_id,
+    rejectedAt: r.rejected_at,
+    overrideDuplicateReason: r.override_duplicate_reason,
+    heuristicDuplicateOfId: r.heuristic_duplicate_of_id,
+    quarantineStatus: r.quarantine_status,
+    retentionUntilDate: r.retention_until_date,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+
+  // Compteurs par statut
+  const statusRows = db
+    .prepare(
+      "SELECT workflow_status, COUNT(*) as c FROM documents WHERE organization_id = ? AND dossier_id = ? GROUP BY workflow_status"
+    )
+    .all(params.organizationId, params.dossierId) as Array<{
+    workflow_status: string;
+    c: number;
+  }>;
+
+  const countsByStatus: Record<string, number> = {
+    ALL: 0,
+    RECEIVED: 0,
+    EXTRACTED: 0,
+    PENDING_REVIEW: 0,
+    CORRECTED: 0,
+    VALIDATED: 0,
+    REJECTED: 0,
+  };
+
+  for (const s of statusRows) {
+    countsByStatus[s.workflow_status] = Number(s.c);
+    countsByStatus["ALL"] = (countsByStatus["ALL"] ?? 0) + Number(s.c);
+  }
+
+  return { documents, total, countsByStatus };
+}
+
+export function getDocumentDetails(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  db?: DatabaseSync;
+}): {
+  document: StoredDocument;
+  downloadToken: string;
+  downloadExpiresAtUnix: number;
+  downloadUrl: string;
+} {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VIEW",
+    db,
+  });
+
+  const row = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!row) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  const document: StoredDocument = {
+    id: row.id,
+    organizationId: row.organization_id,
+    dossierId: row.dossier_id,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type,
+    sizeBytes: Number(row.size_bytes),
+    sha256Checksum: row.sha256_checksum,
+    storageKey: row.storage_key,
+    category: row.category,
+    workflowStatus: row.workflow_status,
+    extractedDataJson: row.extracted_data_json,
+    aiModelVersion: row.ai_model_version,
+    ruleVersionId: row.rule_version_id,
+    uploadedByUserId: row.uploaded_by_user_id,
+    validatedByUserId: row.validated_by_user_id,
+    validatedAt: row.validated_at,
+    rejectionReason: row.rejection_reason,
+    rejectedByUserId: row.rejected_by_user_id,
+    rejectedAt: row.rejected_at,
+    overrideDuplicateReason: row.override_duplicate_reason,
+    heuristicDuplicateOfId: row.heuristic_duplicate_of_id,
+    quarantineStatus: row.quarantine_status,
+    retentionUntilDate: row.retention_until_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+
+  const { token, expiresAtUnix } = generateSignedDocumentDownloadToken({
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    documentId: params.documentId,
+    userId: params.session!.user.id,
+  });
+
+  const downloadUrl = `/api/organizations/${params.organizationId}/dossiers/${params.dossierId}/documents/${params.documentId}/download?token=${token}`;
+
+  return { document, downloadToken: token, downloadExpiresAtUnix: expiresAtUnix, downloadUrl };
+}
+
+export function updateDocumentExtraction(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  fields: {
+    issuerName?: string;
+    invoiceNumber?: string;
+    invoiceDate?: string;
+    dueDate?: string;
+    netAmountMinor?: number;
+    vatAmountMinor?: number;
+    grossAmountMinor?: number;
+    vatRateBps?: number;
+    currency?: string;
+    suggestedAccountCode?: string;
+    category?: DocumentCategory;
+  };
+  db?: DatabaseSync;
+}): StoredDocument {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "EDIT_EXTRACTION",
+    db,
+  });
+
+  const doc = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!doc) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  if (doc.workflow_status === "VALIDATED" || doc.workflow_status === "EXPORTED") {
+    throw new Error(
+      `Impossible de modifier l'extraction d'un document au statut ${doc.workflow_status}.`
+    );
+  }
+
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(doc.extracted_data_json);
+  } catch {
+    parsed = { extraction: {} };
+  }
+
+  const ext = parsed.extraction || {};
+  const now = new Date().toISOString();
+  const userId = params.session!.user.id;
+
+  const updateField = (name: string, val: any) => {
+    if (val !== undefined) {
+      ext[name] = {
+        value: val,
+        source: "HUMAN_ENTRY",
+        confidenceScore: 1.0,
+        validationStatus: "VALIDATED_BY_HUMAN",
+        validatedByUserId: userId,
+        validatedAt: now,
+      };
+    }
+  };
+
+  updateField("issuerName", params.fields.issuerName);
+  updateField("invoiceNumber", params.fields.invoiceNumber);
+  updateField("invoiceDate", params.fields.invoiceDate);
+  updateField("dueDate", params.fields.dueDate);
+  updateField("netAmountMinor", params.fields.netAmountMinor);
+  updateField("vatAmountMinor", params.fields.vatAmountMinor);
+  updateField("grossAmountMinor", params.fields.grossAmountMinor);
+  updateField("vatRateBps", params.fields.vatRateBps);
+  updateField("currency", params.fields.currency);
+  updateField("suggestedAccountCode", params.fields.suggestedAccountCode);
+  if (params.fields.category) {
+    updateField("category", params.fields.category);
+  }
+
+  parsed.extraction = ext;
+  const newJson = JSON.stringify(parsed);
+  const newCategory = params.fields.category ?? doc.category;
+  const newStatus = "CORRECTED";
+
+  db.prepare(
+    `UPDATE documents
+     SET category = ?, workflow_status = ?, extracted_data_json = ?, updated_at = ?
+     WHERE id = ?`
+  ).run(newCategory, newStatus, newJson, now, params.documentId);
+
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: userId,
+      actorRole: "AUTHENTICATED_USER",
+      action: "DOCUMENT_EXTRACTION_CORRECTED_BY_HUMAN",
+      targetEntityType: "DOCUMENT",
+      targetEntityId: params.documentId,
+      metadata: {
+        updatedFields: Object.keys(params.fields),
+        previousStatus: doc.workflow_status,
+        newStatus,
+      },
+    },
+    db
+  );
+
+  return {
+    id: doc.id,
+    organizationId: doc.organization_id,
+    dossierId: doc.dossier_id,
+    originalFilename: doc.original_filename,
+    mimeType: doc.mime_type,
+    sizeBytes: Number(doc.size_bytes),
+    sha256Checksum: doc.sha256_checksum,
+    storageKey: doc.storage_key,
+    category: newCategory,
+    workflowStatus: newStatus,
+    extractedDataJson: newJson,
+    aiModelVersion: doc.ai_model_version,
+    ruleVersionId: doc.rule_version_id,
+    uploadedByUserId: doc.uploaded_by_user_id,
+    validatedByUserId: doc.validated_by_user_id,
+    validatedAt: doc.validated_at,
+    rejectionReason: doc.rejection_reason,
+    rejectedByUserId: doc.rejected_by_user_id,
+    rejectedAt: doc.rejected_at,
+    overrideDuplicateReason: doc.override_duplicate_reason,
+    heuristicDuplicateOfId: doc.heuristic_duplicate_of_id,
+    quarantineStatus: doc.quarantine_status,
+    retentionUntilDate: doc.retention_until_date,
+    createdAt: doc.created_at,
+    updatedAt: now,
+  };
+}
+
+export function validateDocument(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  db?: DatabaseSync;
+}): StoredDocument {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VALIDATE_ACCOUNTING",
+    db,
+  });
+
+  const doc = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!doc) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  if (doc.workflow_status === "REJECTED") {
+    throw new Error("Impossible de valider un document rejeté sans le réexaminer.");
+  }
+
+  const now = new Date().toISOString();
+  const userId = params.session!.user.id;
+
+  db.prepare(
+    `UPDATE documents
+     SET workflow_status = 'VALIDATED', validated_by_user_id = ?, validated_at = ?, updated_at = ?
+     WHERE id = ?`
+  ).run(userId, now, now, params.documentId);
+
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: userId,
+      actorRole: "AUTHENTICATED_USER",
+      action: "DOCUMENT_VALIDATED_BY_HUMAN",
+      targetEntityType: "DOCUMENT",
+      targetEntityId: params.documentId,
+      metadata: {
+        previousStatus: doc.workflow_status,
+        validatedStatus: "VALIDATED",
+      },
+    },
+    db
+  );
+
+  return {
+    ...doc,
+    workflowStatus: "VALIDATED",
+    validatedByUserId: userId,
+    validatedAt: now,
+    updatedAt: now,
+  };
+}
+
+export function rejectDocument(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  rejectionReason: string;
+  db?: DatabaseSync;
+}): StoredDocument {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VALIDATE_ACCOUNTING",
+    db,
+  });
+
+  if (!params.rejectionReason || params.rejectionReason.trim().length < 3) {
+    throw new Error("Le motif de rejet est obligatoire et doit contenir au moins 3 caractères.");
+  }
+
+  const doc = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!doc) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  if (doc.workflow_status === "EXPORTED") {
+    throw new Error("Impossible de rejeter un document déjà exporté.");
+  }
+
+  const now = new Date().toISOString();
+  const userId = params.session!.user.id;
+  const reason = params.rejectionReason.trim();
+
+  db.prepare(
+    `UPDATE documents
+     SET workflow_status = 'REJECTED', rejection_reason = ?, rejected_by_user_id = ?, rejected_at = ?, updated_at = ?
+     WHERE id = ?`
+  ).run(reason, userId, now, now, params.documentId);
+
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: userId,
+      actorRole: "AUTHENTICATED_USER",
+      action: "DOCUMENT_REJECTED_BY_HUMAN",
+      targetEntityType: "DOCUMENT",
+      targetEntityId: params.documentId,
+      justification: reason,
+      metadata: {
+        previousStatus: doc.workflow_status,
+        newStatus: "REJECTED",
+        rejectionReason: reason,
+      },
+    },
+    db
+  );
+
+  return {
+    ...doc,
+    workflowStatus: "REJECTED",
+    rejectionReason: reason,
+    rejectedByUserId: userId,
+    rejectedAt: now,
+    updatedAt: now,
+  };
+}
+
+export function createDraftEntryFromDocument(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  db?: DatabaseSync;
+}): {
+  entry: any;
+  lines: any[];
+} {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "VALIDATE_ACCOUNTING",
+    db,
+  });
+
+  const doc = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!doc) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  if (doc.workflow_status !== "VALIDATED") {
+    throw new Error(
+      `Le document doit être au statut VALIDATED pour générer une écriture (statut actuel : ${doc.workflow_status}).`
+    );
+  }
+
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(doc.extracted_data_json);
+  } catch {
+    parsed = {};
+  }
+
+  const ext = parsed.extraction || {};
+  const isCustomer = doc.category === "CUSTOMER_INVOICE";
+  const journalCode = isCustomer ? "VEN" : "ACH";
+
+  const invoiceNumber = ext.invoiceNumber?.value || `DOC-${doc.id.slice(0, 8)}`;
+  const entryDate = ext.invoiceDate?.value || new Date().toISOString().slice(0, 10);
+  const thirdParty = ext.issuerName?.value || ext.recipientName?.value || "Tiers";
+  const label = `${isCustomer ? "Facture client" : "Facture fournisseur"} ${thirdParty} - ${invoiceNumber}`;
+
+  const grossMinor = Math.round(Number(ext.grossAmountMinor?.value) || 0);
+  const vatMinor = Math.round(Number(ext.vatAmountMinor?.value) || 0);
+  let netMinor = Math.round(Number(ext.netAmountMinor?.value) || 0);
+
+  // Garantie stricte de l'égalité Débit === Crédit
+  if (grossMinor > 0 && netMinor + vatMinor !== grossMinor) {
+    netMinor = grossMinor - vatMinor;
+  }
+
+  const currency = ext.currency?.value || "EUR";
+  const entryId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const userId = params.session!.user.id;
+
+  const lines: any[] = [];
+
+  if (isCustomer) {
+    // Vente : Débit Client 411000 (TTC)
+    lines.push({
+      id: crypto.randomUUID(),
+      lineNumber: 1,
+      generalAccountCode: "411000",
+      label,
+      debitMinor: grossMinor,
+      creditMinor: 0,
+    });
+
+    // Crédit TVA Collectée 445710 si > 0
+    if (vatMinor > 0) {
+      lines.push({
+        id: crypto.randomUUID(),
+        lineNumber: 2,
+        generalAccountCode: "445710",
+        label: `TVA collectée - ${invoiceNumber}`,
+        debitMinor: 0,
+        creditMinor: vatMinor,
+      });
+    }
+
+    // Crédit Vente 706000 (HT)
+    lines.push({
+      id: crypto.randomUUID(),
+      lineNumber: lines.length + 1,
+      generalAccountCode: "706000",
+      label: `Prestations / Ventes - ${invoiceNumber}`,
+      debitMinor: 0,
+      creditMinor: netMinor,
+    });
+  } else {
+    // Achat : Débit Charge 606000 ou compte suggéré (HT)
+    const chargeAccount = ext.suggestedAccountCode?.value || "606000";
+    lines.push({
+      id: crypto.randomUUID(),
+      lineNumber: 1,
+      generalAccountCode: chargeAccount,
+      label: `Achats / Charges - ${invoiceNumber}`,
+      debitMinor: netMinor,
+      creditMinor: 0,
+    });
+
+    // Débit TVA Déductible 445660 si > 0
+    if (vatMinor > 0) {
+      lines.push({
+        id: crypto.randomUUID(),
+        lineNumber: 2,
+        generalAccountCode: "445660",
+        label: `TVA déductible - ${invoiceNumber}`,
+        debitMinor: vatMinor,
+        creditMinor: 0,
+      });
+    }
+
+    // Crédit Fournisseur 401000 (TTC)
+    lines.push({
+      id: crypto.randomUUID(),
+      lineNumber: lines.length + 1,
+      generalAccountCode: "401000",
+      label,
+      debitMinor: 0,
+      creditMinor: grossMinor,
+    });
+  }
+
+  const totalDebit = lines.reduce((acc, l) => acc + l.debitMinor, 0);
+  const totalCredit = lines.reduce((acc, l) => acc + l.creditMinor, 0);
+
+  if (totalDebit !== totalCredit) {
+    throw new Error(
+      `Écriture déséquilibrée : total débit (${totalDebit}) !== total crédit (${totalCredit}).`
+    );
+  }
+
+  // Insertion de l'écriture en statut STRICTEMENT DRAFT (brouillon)
+  db.prepare(
+    `INSERT INTO accounting_entries (
+      id, organization_id, dossier_id, journal_code, entry_date,
+      piece_number, label, status, currency, total_debit_minor, total_credit_minor,
+      document_id, rule_version_id, created_by_user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    entryId,
+    params.organizationId,
+    params.dossierId,
+    journalCode,
+    entryDate,
+    invoiceNumber,
+    label,
+    currency,
+    totalDebit,
+    totalCredit,
+    doc.id,
+    doc.rule_version_id,
+    userId,
+    now
+  );
+
+  // Insertion des lignes
+  const insertLine = db.prepare(
+    `INSERT INTO accounting_entry_lines (
+      id, organization_id, dossier_id, entry_id, line_number,
+      general_account_code, label, debit_minor, credit_minor,
+      currency, currency_minor_unit_exponent, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?)`
+  );
+
+  for (const l of lines) {
+    insertLine.run(
+      l.id,
+      params.organizationId,
+      params.dossierId,
+      entryId,
+      l.lineNumber,
+      l.generalAccountCode,
+      l.label,
+      l.debitMinor,
+      l.creditMinor,
+      currency,
+      now
+    );
+  }
+
+  // Traçabilité audit inaltérable
+  recordAuditLog(
+    {
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      actorUserId: userId,
+      actorRole: "AUTHENTICATED_USER",
+      action: "ACCOUNTING_DRAFT_ENTRY_GENERATED_FROM_DOCUMENT",
+      targetEntityType: "ACCOUNTING_ENTRY",
+      targetEntityId: entryId,
+      metadata: {
+        documentId: doc.id,
+        journalCode,
+        entryDate,
+        pieceNumber: invoiceNumber,
+        status: "DRAFT",
+        totalDebit,
+        totalCredit,
+        linesCount: lines.length,
+      },
+    },
+    db
+  );
+
+  return {
+    entry: {
+      id: entryId,
+      organizationId: params.organizationId,
+      dossierId: params.dossierId,
+      journalCode,
+      entryDate,
+      pieceNumber: invoiceNumber,
+      label,
+      status: "DRAFT",
+      currency,
+      totalDebitMinor: totalDebit,
+      totalCreditMinor: totalCredit,
+      documentId: doc.id,
+      createdAt: now,
+    },
+    lines,
+  };
+}
+
+export async function deleteDocument(params: {
+  session: AuthenticatedSessionContext | null;
+  organizationId: string;
+  dossierId: string;
+  documentId: string;
+  db?: DatabaseSync;
+}): Promise<{ deleted: boolean; documentId: string }> {
+  const db = params.db ?? getDatabase();
+  assertDossierAccess({
+    session: params.session,
+    organizationId: params.organizationId,
+    dossierId: params.dossierId,
+    permission: "EDIT_EXTRACTION",
+    db,
+  });
+
+  const doc = db
+    .prepare(
+      "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+    )
+    .get(params.documentId, params.organizationId, params.dossierId) as any;
+
+  if (!doc) {
+    throw new Error(`Document introuvable : ${params.documentId}`);
+  }
+
+  // Vérifier qu'aucune écriture validée ou exportée n'y est rattachée
+  const validatedEntry = db
+    .prepare(
+      "SELECT id FROM accounting_entries WHERE document_id = ? AND status IN ('VALIDATED', 'EXPORTED')"
+    )
+    .get(params.documentId) as { id: string } | undefined;
+
+  if (validatedEntry) {
+    throw new Error(
+      "Impossible de supprimer un document rattaché à une écriture comptable validée ou exportée."
+    );
+  }
+
+  // Dédier les écritures brouillons associées
+  db.prepare(
+    "UPDATE accounting_entries SET document_id = NULL WHERE document_id = ?"
+  ).run(params.documentId);
+
+  // Suppression du fichier du stockage privé
+  try {
+    await defaultDocumentStorage.deleteFile(doc.storage_key);
+  } catch {
+    // Si déjà supprimé ou fichier introuvable, on poursuit le nettoyage en base
+  }
+
+  db.prepare("DELETE FROM documents WHERE id = ?").run(params.documentId);
 
   recordAuditLog(
     {
@@ -1681,43 +2619,19 @@ export async function ingestDocumentIntoDossier(params: {
       dossierId: params.dossierId,
       actorUserId: params.session!.user.id,
       actorRole: "AUTHENTICATED_USER",
-      action: "DOCUMENT_INGESTED_PENDING_HUMAN_REVIEW",
+      action: "DOCUMENT_DELETED",
       targetEntityType: "DOCUMENT",
-      targetEntityId: id,
+      targetEntityId: params.documentId,
       metadata: {
-        filename: params.originalFilename,
-        sha256Checksum,
-        duplicateDetected: Boolean(existingDuplicate),
-        promptInjectionDetected: metadata.promptInjectionDetected,
+        filename: doc.original_filename,
+        sha256Checksum: doc.sha256_checksum,
+        previousStatus: doc.workflow_status,
       },
     },
     db
   );
 
-  return {
-    document: {
-      id,
-      organizationId: params.organizationId,
-      dossierId: params.dossierId,
-      originalFilename: params.originalFilename,
-      mimeType: params.mimeType,
-      sizeBytes: params.contentBuffer.byteLength,
-      sha256Checksum,
-      storageKey,
-      category: params.category ?? extraction.category.value,
-      workflowStatus: "PENDING_REVIEW",
-      extractedDataJson: JSON.stringify({ extraction, aiMetadata: metadata }),
-      aiModelVersion: metadata.modelName,
-      ruleVersionId: dossierRow.country_config_version_id,
-      uploadedByUserId: params.session!.user.id,
-      validatedByUserId: null,
-      validatedAt: null,
-      retentionUntilDate,
-      createdAt: now,
-      updatedAt: now,
-    },
-    duplicateDetected: Boolean(existingDuplicate),
-  };
+  return { deleted: true, documentId: params.documentId };
 }
 
 export function getOrganizationDashboardMetrics(params: {

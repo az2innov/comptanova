@@ -126,7 +126,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     seedDemoData(db);
 
     try {
-      // 3.1 Vérifier que les 5 migrations (001 à 005) sont appliquées
+      // 3.1 Vérifier que les 6 migrations (001 à 006) sont appliquées
       const migrations = db
         .prepare(`SELECT version FROM schema_migrations ORDER BY version ASC`)
         .all() as Array<{ version: string }>;
@@ -138,6 +138,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
           "003_phase1_readiness_schema",
           "004_audit_logs_immutability_triggers",
           "005_phase1_lot1_1_dossier_metadata",
+          "006_phase1_lot1_2_document_lifecycle",
         ]
       );
 

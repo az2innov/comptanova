@@ -171,3 +171,25 @@
   - Test de migration sur copie dédiée : `DATABASE_PATH=./data/backups/app.db.test-migration-005.sqlite node dist/db/migrate-cli.js` $\rightarrow$ `status: "OK", appliedVersions: ["005_phase1_lot1_1_dossier_metadata"], totalMigrations: 5` (copie temporaire nettoyée ensuite, `./data/app.db` intacte).
   - `npm test` $\rightarrow$ **26/26 tests passants** (4 suites, 0 échec, durée `1681.93 ms`), incluant le test PostgreSQL 16.15 local.
 
+## ACT-0013 — 2026-10-18T20:53:00+01:00 — Implémentation du Lot 1.2 : Module 3 — Collecte documentaire, OCR assisté, détection de doublons et cycle de vie à 6 statuts
+- **Objectif** : Implémenter intégralement le Module 3 (Collecte documentaire) de la Phase 1 sans régression sur les fondations existantes.
+- **Périmètre & Fichiers modifiés** :
+  - `src/services/file-security.ts` (NOUVEAU) : Validation stricte des fichiers (taille max 15 Mo, magic bytes PDF/PNG/JPEG/CSV, interdiction stricte des exécutables Windows MZ / Linux ELF / scripts `#!`), neutralisation sécurisée des noms de fichiers (`sanitizeFilename` anti-traversée de chemin), scanner antimalware avec détection signature EICAR, et gestionnaire de stockage privé sécurisé hors web root (`PrivateDocumentStorageManager`).
+  - `src/db/database.ts` & `src/db/phase1-readiness-migration.ts` : Ajout de la migration `006_phase1_lot1_2_document_lifecycle` (statut `REJECTED`, motifs de rejet, trace d'audit du rejet, détection de doublon exact/heuristique, statut de quarantaine, index `idx_documents_status`).
+  - `src/domain/types.ts` : Ajout de `REJECTED` dans `DocumentWorkflowStatus` et enrichissement de l'interface `StoredDocument`.
+  - `src/services/tenant-service.ts` : Fonctions du cycle de vie documentaire : `ingestDocumentIntoDossier`, `listDossierDocuments`, `getDocumentDetails`, `updateDocumentExtraction`, `validateDocument`, `rejectDocument` (motif obligatoire $\ge$ 10 caractères et tracé en audit), `createDraftEntryFromDocument` (écriture strictement `DRAFT` en partie double équilibrée, sans auto-validation), `deleteDocument`.
+  - `src/server.ts` : Endpoints REST complets `/api/organizations/:orgId/dossiers/:dossierId/documents*` avec validation RBAC, génération de liens signés HMAC SHA-256 avec expiration (15 minutes), et support de l'upload base64 (limite body portée à 25 Mo).
+  - `src/ui/app-view.ts` : Interface utilisateur complète du Module 3 remplaçant le placeholder `#tab-documents` : zone de dépôt glisser-déposer, sélection de catégorie, filtres par statut avec compteurs visuels (6 statuts officiels), tableau des pièces, panneau latéral d'inspection/correction avec saisie des champs extraits, modal de rejet avec motif obligatoire, alerte de doublon avec dérogation explicite justifiée, et bouton de génération d'écriture brouillon. Palette stricte conforme aux tokens sans couleur codée en dur hors `:root`.
+  - `src/tests/phase1-lot1-2.test.ts` (NOUVEAU) : Suite de tests automatisés couvrant 7 exigences clés (sécurité fichiers, anti-traversée, liens signés, doublons avec dérogation, cycle de vie à 6 statuts, écriture brouillon DRAFT, et intégration API REST).
+  - `src/tests/phase1-readiness-and-postgres.test.ts` : Prise en compte de la migration `006` dans le test de conformité.
+- **Sauvegarde & Intégrité** :
+  - Sauvegarde de la base de référence avant travaux : `data/backups/app.db.pre-lot-1.2.bak` (empreinte SHA-256 vérifiée).
+  - Base SQLite en mémoire et isolée pour les tests d'intégration.
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **33/33 tests passants** (5 suites de test, 0 échec, durée `1761.09 ms`).
+  - 100% de succès sur l'ensemble des modules (Scope international, Phase 0, Lot 1.1, Lot 1.2, et tests PostgreSQL 16 réels).
+- **Réserves / Prochaines étapes** :
+  - Le Lot 1.2 est finalisé et vérifié.
+  - Conformément à la directive d'incrémentalité stricte, le Lot 1.3 (Module 2 — Facturation et Devis) ne sera démarré qu'après validation explicite de l'utilisateur.
+

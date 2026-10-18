@@ -544,11 +544,234 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
       <!-- ONGLET 3 : DOCUMENTS & OCR (Lot 1.2) -->
       <section id="tab-documents" class="tab-panel hidden">
-        <div class="card">
-          <h3>Module 3 — Collecte documentaire &amp; OCR assisté (Planifié au Lot 1.2)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Ce module est rattaché au dossier actif sélectionné dans la barre de contexte supérieure. Le cycle de vie documentaire à 6 statuts, la détection de doublons et l'extraction assistée par IA non auto-validante seront activés dans le Lot 1.2.
-          </p>
+        <!-- État Dossier Inactif ou Non Sélectionné -->
+        <div id="docs-no-dossier-state" class="cn-state-box cn-state-empty hidden">
+          <strong>Aucun dossier actif sélectionné.</strong> Veuillez sélectionner un dossier client dans le bandeau supérieur pour accéder à sa collecte documentaire.
+        </div>
+
+        <div id="docs-content-container">
+          <!-- Zone d'import et de dépôt de justificatifs -->
+          <div class="card" id="doc-upload-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+              <h3 style="margin:0;">Module 3 — Collecte documentaire &amp; OCR assisté</h3>
+              <span class="badge badge-ai">OCR non auto-validante : révision humaine requise</span>
+            </div>
+            <p style="font-size:0.88rem; color:var(--cn-text-secondary); margin-bottom:1rem;">
+              Déposez vos factures, notes de frais ou relevés bancaires (formats acceptés : <strong>PDF, PNG, JPG, JPEG, CSV</strong> — taille max. <strong>15 Mo</strong>). Contrôle d'intégrité SHA-256, validation stricte des octets magiques et analyse de sécurité antimalware systématique.
+            </p>
+
+            <form id="doc-upload-form" style="display:flex; flex-direction:column; gap:0.85rem;">
+              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem;">
+                <div>
+                  <label for="doc-upload-category">Catégorie du document *</label>
+                  <select id="doc-upload-category" required>
+                    <option value="SUPPLIER_INVOICE">Facture fournisseur (Achat)</option>
+                    <option value="CUSTOMER_INVOICE">Facture client (Vente)</option>
+                    <option value="RECEIPT_EXPENSE">Note de frais / Ticket de caisse</option>
+                    <option value="BANK_STATEMENT">Relevé de compte bancaire</option>
+                    <option value="PAYMENT_PROOF">Preuve de paiement / Virement</option>
+                    <option value="CREDIT_NOTE">Avoir / Note de crédit</option>
+                    <option value="OTHER">Autre justificatif</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="doc-file-input">Fichier source * (PDF, PNG, JPG, CSV &le; 15 Mo)</label>
+                  <input id="doc-file-input" type="file" required accept=".pdf,.png,.jpg,.jpeg,.csv,application/pdf,image/png,image/jpeg,text/csv" />
+                </div>
+              </div>
+
+              <!-- Zone de glisser-déposer interactive -->
+              <div id="doc-dropzone" style="border:2px dashed var(--cn-border); border-radius:var(--cn-radius-md); padding:1.25rem; text-align:center; background:var(--cn-bg-app); cursor:pointer; transition:border-color 0.15s ease-in-out;">
+                <div style="font-weight:600; color:var(--cn-text-primary);" id="doc-dropzone-label">
+                  Glissez-déposez un fichier ici ou cliquez pour parcourir
+                </div>
+                <div style="font-size:0.8rem; color:var(--cn-text-secondary); margin-top:0.25rem;">
+                  Contrôle d'intégrité SHA-256 et détection automatique de doublons
+                </div>
+              </div>
+
+              <!-- Option de dérogation de doublon (affichée si doublon détecté) -->
+              <div id="doc-duplicate-override-box" class="cn-state-box cn-state-error hidden" style="margin-top:0.5rem;">
+                <div style="font-weight:600; margin-bottom:0.35rem;" id="doc-duplicate-warning-text">
+                  Attention : Suspicion de doublon détectée !
+                </div>
+                <label for="doc-override-reason" style="font-size:0.85rem;">Motif obligatoire de dérogation au doublon :</label>
+                <input id="doc-override-reason" placeholder="Ex: Réémission après annulation ou pièce complémentaire distincte" style="margin-bottom:0.5rem;" />
+                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; cursor:pointer;">
+                  <input id="doc-allow-override-check" type="checkbox" />
+                  Je confirme que cette pièce doit être importée malgré le doublon détecté.
+                </label>
+              </div>
+
+              <div style="display:flex; justify-content:flex-end;">
+                <button id="doc-upload-submit-btn" type="submit" class="btn-primary">
+                  Importer et analyser le document
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Filtres et statistiques du cycle de vie documentaire à 6 statuts -->
+          <div class="card" style="margin-top:1rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.75rem;">
+              <h3 style="margin:0;">Pièces justificatives du dossier</h3>
+              <div style="display:flex; gap:0.4rem; flex-wrap:wrap;" id="doc-status-pills">
+                <button type="button" class="btn-secondary doc-filter-pill active" data-status="ALL">Tous (<span id="cnt-all">0</span>)</button>
+                <button type="button" class="btn-secondary doc-filter-pill" data-status="PENDING_REVIEW">À réviser (<span id="cnt-pending">0</span>)</button>
+                <button type="button" class="btn-secondary doc-filter-pill" data-status="CORRECTED">Corrigés (<span id="cnt-corrected">0</span>)</button>
+                <button type="button" class="btn-secondary doc-filter-pill" data-status="VALIDATED">Validés (<span id="cnt-validated">0</span>)</button>
+                <button type="button" class="btn-secondary doc-filter-pill" data-status="REJECTED">Rejetés (<span id="cnt-rejected">0</span>)</button>
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+              <div>
+                <label for="doc-filter-category">Catégorie</label>
+                <select id="doc-filter-category">
+                  <option value="ALL">Toutes catégories</option>
+                  <option value="SUPPLIER_INVOICE">Factures fournisseurs</option>
+                  <option value="CUSTOMER_INVOICE">Factures clients</option>
+                  <option value="RECEIPT_EXPENSE">Notes de frais</option>
+                  <option value="BANK_STATEMENT">Relevés bancaires</option>
+                  <option value="PAYMENT_PROOF">Preuves de paiement</option>
+                  <option value="OTHER">Autres</option>
+                </select>
+              </div>
+              <div>
+                <label for="doc-filter-search">Recherche par nom ou mot-clé</label>
+                <input id="doc-filter-search" placeholder="Ex: EDF, Orange, FAC-2026..." />
+              </div>
+            </div>
+
+            <!-- Tableau des documents -->
+            <div style="overflow-x:auto;">
+              <table style="width:100%; border-collapse:collapse; font-size:0.86rem;">
+                <thead>
+                  <tr style="border-bottom:2px solid var(--cn-border); text-align:start;">
+                    <th style="padding:0.6rem 0.5rem;">Date</th>
+                    <th style="padding:0.6rem 0.5rem;">Nom du fichier</th>
+                    <th style="padding:0.6rem 0.5rem;">Catégorie</th>
+                    <th style="padding:0.6rem 0.5rem;">Tiers &amp; Pièce</th>
+                    <th style="padding:0.6rem 0.5rem;">Montant TTC</th>
+                    <th style="padding:0.6rem 0.5rem;">Confiance OCR</th>
+                    <th style="padding:0.6rem 0.5rem;">Statut</th>
+                    <th style="padding:0.6rem 0.5rem;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="documents-tbody">
+                  <!-- Rempli dynamiquement -->
+                </tbody>
+              </table>
+            </div>
+
+            <div id="documents-empty-state" class="cn-state-box cn-state-empty hidden" style="margin-top:1rem;">
+              Aucun document ne correspond aux critères sélectionnés.
+            </div>
+          </div>
+
+          <!-- Panneau d'examen interactif et de correction / validation -->
+          <div id="document-detail-panel" class="card hidden" style="margin-top:1rem; border:2px solid var(--cn-accent-amber);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.75rem;">
+              <div>
+                <h3 id="doc-detail-filename" style="margin:0 0 0.25rem 0;">Examen du document</h3>
+                <div style="font-size:0.8rem; color:var(--cn-text-secondary);" id="doc-detail-meta">
+                  Empreinte SHA-256 | Taille | Rétention
+                </div>
+              </div>
+              <div style="display:flex; gap:0.5rem; align-items:center;">
+                <a id="doc-detail-download-btn" href="#" target="_blank" class="btn-secondary" style="font-size:0.82rem; text-decoration:none;">
+                  Télécharger l'original sécurisé
+                </a>
+                <button type="button" id="doc-detail-close-btn" class="btn-secondary" style="font-size:0.82rem;">Fermer</button>
+              </div>
+            </div>
+
+            <!-- Alerte Doublon Heuristique si présente -->
+            <div id="doc-detail-duplicate-alert" class="cn-state-box cn-state-error hidden" style="margin-bottom:1rem;">
+              <strong id="doc-detail-duplicate-title">Suspicion de doublon :</strong>
+              <div id="doc-detail-duplicate-desc" style="font-size:0.85rem; margin-top:0.25rem;"></div>
+            </div>
+
+            <!-- Motif de rejet si rejeté -->
+            <div id="doc-detail-rejection-box" class="cn-state-box cn-state-error hidden" style="margin-bottom:1rem;">
+              <strong>Document Rejeté :</strong>
+              <div id="doc-detail-rejection-reason" style="font-size:0.85rem; margin-top:0.25rem;"></div>
+            </div>
+
+            <!-- Formulaire de révision et correction des champs extraits -->
+            <form id="doc-correction-form">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                <h4 style="margin:0; font-size:0.95rem;">Champs extraits &amp; Saisie assistée</h4>
+                <div id="doc-extraction-provenance" class="badge badge-ai">Source : IA Assistée (Simulé)</div>
+              </div>
+
+              <div class="form-grid">
+                <div>
+                  <label for="field-issuer-name">Fournisseur / Émetteur</label>
+                  <input id="field-issuer-name" />
+                  <small id="conf-issuer-name" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-invoice-number">Numéro de pièce / facture</label>
+                  <input id="field-invoice-number" />
+                  <small id="conf-invoice-number" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-invoice-date">Date de facture</label>
+                  <input id="field-invoice-date" type="date" />
+                  <small id="conf-invoice-date" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-due-date">Date d'échéance</label>
+                  <input id="field-due-date" type="date" />
+                  <small id="conf-due-date" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-net-amount">Montant HT (€)</label>
+                  <input id="field-net-amount" type="number" step="0.01" />
+                  <small id="conf-net-amount" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-vat-amount">Montant TVA (€)</label>
+                  <input id="field-vat-amount" type="number" step="0.01" />
+                  <small id="conf-vat-amount" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-gross-amount">Montant TTC (€)</label>
+                  <input id="field-gross-amount" type="number" step="0.01" />
+                  <small id="conf-gross-amount" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+                <div>
+                  <label for="field-account-code">Compte comptable suggéré</label>
+                  <input id="field-account-code" placeholder="Ex: 606000 ou 706000" />
+                  <small id="conf-account-code" style="font-size:0.75rem; color:var(--cn-text-secondary);"></small>
+                </div>
+              </div>
+
+              <!-- Boutons d'actions du cycle de vie -->
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-top:1.25rem; border-top:1px solid var(--cn-border); padding-top:1rem;">
+                <div style="display:flex; gap:0.5rem;">
+                  <button type="button" id="doc-delete-btn" class="btn-secondary" style="color:var(--cn-state-error-text); border-color:var(--cn-state-error-border);">
+                    Supprimer
+                  </button>
+                  <button type="button" id="doc-reject-btn" class="btn-secondary" style="color:var(--cn-state-error-text); border-color:var(--cn-state-error-border);">
+                    Rejeter avec motif
+                  </button>
+                </div>
+                <div style="display:flex; gap:0.5rem;">
+                  <button type="submit" id="doc-save-corrections-btn" class="btn-secondary">
+                    Enregistrer les corrections
+                  </button>
+                  <button type="button" id="doc-validate-btn" class="btn-primary">
+                    Valider le document
+                  </button>
+                  <button type="button" id="doc-generate-draft-entry-btn" class="btn-primary hidden" style="background:var(--cn-accent-amber); border-color:var(--cn-accent-amber); color:var(--cn-text-primary);">
+                    Générer l'écriture brouillon
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
         </div>
       </section>
 
@@ -904,6 +1127,13 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       document.querySelectorAll(".tab-panel").forEach((p) => {
         p.classList.toggle("hidden", p.id !== targetTabId);
       });
+      if (targetTabId === "tab-documents") {
+        if (activeDossierId) {
+          loadDocumentsList(activeDossierId);
+        } else {
+          showDocumentsNoDossierState();
+        }
+      }
     }
 
     document.querySelectorAll(".nav-btn, .nav-sub-btn").forEach((btn) => {
@@ -924,6 +1154,13 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       updateActiveDossierStatusBadge();
       if (!document.getElementById("dossier-detail-panel").classList.contains("hidden")) {
         await loadDossierDetails(activeDossierId);
+      }
+      if (!document.getElementById("tab-documents").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadDocumentsList(activeDossierId);
+        } else {
+          showDocumentsNoDossierState();
+        }
       }
     });
 
@@ -1474,6 +1711,466 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           "</tr>";
       }).join("");
     }
+
+    // --- MODULE 3 : COLLECTE DOCUMENTAIRE & OCR (Lot 1.2) ---
+    let cachedDocuments = [];
+    let selectedDocument = null;
+    let currentDocStatusFilter = "ALL";
+    let currentDocCategoryFilter = "ALL";
+    let currentDocSearch = "";
+
+    function showDocumentsNoDossierState() {
+      document.getElementById("docs-no-dossier-state").classList.remove("hidden");
+      document.getElementById("docs-content-container").classList.add("hidden");
+    }
+
+    async function loadDocumentsList(dossierId) {
+      if (!dossierId) {
+        showDocumentsNoDossierState();
+        return;
+      }
+      document.getElementById("docs-no-dossier-state").classList.add("hidden");
+      document.getElementById("docs-content-container").classList.remove("hidden");
+
+      try {
+        let url = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/documents?limit=100";
+        if (currentDocStatusFilter !== "ALL") {
+          url += "&status=" + encodeURIComponent(currentDocStatusFilter);
+        }
+        if (currentDocCategoryFilter !== "ALL") {
+          url += "&category=" + encodeURIComponent(currentDocCategoryFilter);
+        }
+        if (currentDocSearch) {
+          url += "&q=" + encodeURIComponent(currentDocSearch);
+        }
+
+        const res = await apiFetch(url);
+        cachedDocuments = res.documents || [];
+
+        // Mise à jour des compteurs
+        const counts = res.countsByStatus || {};
+        document.getElementById("cnt-all").textContent = counts.ALL || 0;
+        document.getElementById("cnt-pending").textContent = counts.PENDING_REVIEW || 0;
+        document.getElementById("cnt-corrected").textContent = counts.CORRECTED || 0;
+        document.getElementById("cnt-validated").textContent = counts.VALIDATED || 0;
+        document.getElementById("cnt-rejected").textContent = counts.REJECTED || 0;
+
+        renderDocumentsTable(cachedDocuments);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    function renderDocumentsTable(docs) {
+      const tbody = document.getElementById("documents-tbody");
+      const emptyState = document.getElementById("documents-empty-state");
+
+      if (!docs || docs.length === 0) {
+        tbody.innerHTML = "";
+        emptyState.classList.remove("hidden");
+        return;
+      }
+      emptyState.classList.add("hidden");
+
+      const statusMap = {
+        RECEIVED: { label: "Reçu", badgeClass: "badge-draft" },
+        EXTRACTED: { label: "Extrait", badgeClass: "badge-ai" },
+        PENDING_REVIEW: { label: "À réviser", badgeClass: "badge-ai" },
+        CORRECTED: { label: "Corrigé", badgeClass: "badge-draft" },
+        VALIDATED: { label: "Validé", badgeClass: "badge-valid" },
+        REJECTED: { label: "Rejeté", badgeClass: "badge-draft", style: "background:var(--cn-state-error-bg); color:var(--cn-state-error-text); border:1px solid var(--cn-state-error-border);" },
+        EXPORTED: { label: "Exporté", badgeClass: "badge-valid" }
+      };
+
+      const categoryMap = {
+        SUPPLIER_INVOICE: "Facture fournisseur",
+        CUSTOMER_INVOICE: "Facture client",
+        RECEIPT_EXPENSE: "Note de frais",
+        BANK_STATEMENT: "Relevé bancaire",
+        PAYMENT_PROOF: "Preuve de paiement",
+        CREDIT_NOTE: "Avoir",
+        OTHER: "Autre"
+      };
+
+      tbody.innerHTML = docs.map((d) => {
+        let ext = {};
+        try {
+          ext = JSON.parse(d.extractedDataJson).extraction || {};
+        } catch {}
+
+        const thirdParty = (ext.issuerName && ext.issuerName.value) || (ext.recipientName && ext.recipientName.value) || "—";
+        const pieceNum = (ext.invoiceNumber && ext.invoiceNumber.value) || "—";
+        const grossMinor = ext.grossAmountMinor && ext.grossAmountMinor.value;
+        const grossStr = grossMinor !== undefined ? (grossMinor / 100).toFixed(2) + " €" : "—";
+
+        let avgConf = 0.9;
+        if (ext.grossAmountMinor && ext.grossAmountMinor.confidenceScore !== undefined) {
+          avgConf = ext.grossAmountMinor.confidenceScore;
+        }
+        let confBadge = "<span class='badge badge-valid'>" + (avgConf * 100).toFixed(0) + "% (Haute)</span>";
+        if (avgConf < 0.5) {
+          confBadge = "<span class='badge' style='background:var(--cn-state-error-bg); color:var(--cn-state-error-text); border:1px solid var(--cn-state-error-border);'>" + (avgConf * 100).toFixed(0) + "% (Faible)</span>";
+        } else if (avgConf < 0.85) {
+          confBadge = "<span class='badge badge-ai'>" + (avgConf * 100).toFixed(0) + "% (Moyenne)</span>";
+        }
+
+        const st = statusMap[d.workflowStatus] || { label: d.workflowStatus, badgeClass: "badge-draft" };
+        const stBadge = "<span class='badge " + st.badgeClass + "'" + (st.style ? " style='" + st.style + "'" : "") + ">" + st.label + "</span>";
+        const dateStr = d.createdAt ? d.createdAt.slice(0, 10) : "—";
+        const isSelected = selectedDocument && selectedDocument.id === d.id;
+
+        return "<tr style='border-bottom:1px solid var(--cn-border);" + (isSelected ? " background:rgba(35, 125, 104, 0.08); font-weight:600;" : "") + "'>" +
+          "<td class='font-mono-tabular' style='padding:0.6rem 0.5rem;'>" + dateStr + "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" +
+            "<strong>" + d.originalFilename + "</strong><br/>" +
+            "<small style='color:var(--cn-text-secondary); font-size:0.75rem;'>" + (d.sizeBytes / 1024).toFixed(1) + " Ko | SHA: " + d.sha256Checksum.slice(0, 8) + "...</small>" +
+          "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" + (categoryMap[d.category] || d.category) + "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" + thirdParty + "<br/><small class='font-mono-tabular' style='color:var(--cn-text-secondary);'>" + pieceNum + "</small></td>" +
+          "<td class='font-mono-tabular' style='padding:0.6rem 0.5rem;'>" + grossStr + "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" + confBadge + "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" + stBadge + "</td>" +
+          "<td style='padding:0.6rem 0.5rem;'>" +
+            "<button type='button' class='btn-secondary doc-inspect-btn' data-doc-id='" + d.id + "' style='font-size:0.78rem; padding:0.25rem 0.55rem;'>" +
+              "Examiner" +
+            "</button>" +
+          "</td>" +
+        "</tr>";
+      }).join("");
+
+      tbody.querySelectorAll(".doc-inspect-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          openDocumentDetail(btn.getAttribute("data-doc-id"));
+        });
+      });
+    }
+
+    async function openDocumentDetail(docId) {
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + docId);
+        selectedDocument = res.document;
+
+        const panel = document.getElementById("document-detail-panel");
+        panel.classList.remove("hidden");
+
+        document.getElementById("doc-detail-filename").textContent = selectedDocument.originalFilename;
+        document.getElementById("doc-detail-meta").textContent =
+          "Empreinte SHA-256 : " + selectedDocument.sha256Checksum + " | Taille : " + (selectedDocument.sizeBytes / 1024).toFixed(1) + " Ko | Conservation légale : jusqu'au " + selectedDocument.retentionUntilDate;
+
+        const dlBtn = document.getElementById("doc-detail-download-btn");
+        dlBtn.href = res.downloadUrl;
+
+        // Doublon
+        const dupAlert = document.getElementById("doc-detail-duplicate-alert");
+        if (selectedDocument.heuristicDuplicateOfId) {
+          dupAlert.classList.remove("hidden");
+          document.getElementById("doc-detail-duplicate-desc").textContent =
+            "Ce document présente une forte concordance avec une pièce déjà importée (ID: " + selectedDocument.heuristicDuplicateOfId + ")." +
+            (selectedDocument.overrideDuplicateReason ? " Dérogation accordée : \"" + selectedDocument.overrideDuplicateReason + "\"" : "");
+        } else {
+          dupAlert.classList.add("hidden");
+        }
+
+        // Rejet
+        const rejBox = document.getElementById("doc-detail-rejection-box");
+        if (selectedDocument.workflowStatus === "REJECTED") {
+          rejBox.classList.remove("hidden");
+          document.getElementById("doc-detail-rejection-reason").textContent =
+            selectedDocument.rejectionReason || "Aucun motif spécifié.";
+        } else {
+          rejBox.classList.add("hidden");
+        }
+
+        // Parsing des champs extraits
+        let ext = {};
+        try {
+          const parsed = JSON.parse(selectedDocument.extractedDataJson);
+          ext = parsed.extraction || {};
+        } catch {}
+
+        const setField = (id, confId, fieldObj, isMinor) => {
+          const inp = document.getElementById(id);
+          const conf = document.getElementById(confId);
+          if (fieldObj && fieldObj.value !== undefined) {
+            inp.value = isMinor ? (fieldObj.value / 100).toFixed(2) : fieldObj.value;
+            const score = fieldObj.confidenceScore !== undefined ? fieldObj.confidenceScore : 0.9;
+            const src = fieldObj.source === "HUMAN_ENTRY" ? "Saisie humaine" : "IA Assistée";
+            conf.textContent = "Confiance : " + (score * 100).toFixed(0) + "% (" + src + ")";
+          } else {
+            inp.value = "";
+            conf.textContent = "";
+          }
+        };
+
+        setField("field-issuer-name", "conf-issuer-name", ext.issuerName, false);
+        setField("field-invoice-number", "conf-invoice-number", ext.invoiceNumber, false);
+        setField("field-invoice-date", "conf-invoice-date", ext.invoiceDate, false);
+        setField("field-due-date", "conf-due-date", ext.dueDate, false);
+        setField("field-net-amount", "conf-net-amount", ext.netAmountMinor, true);
+        setField("field-vat-amount", "conf-vat-amount", ext.vatAmountMinor, true);
+        setField("field-gross-amount", "conf-gross-amount", ext.grossAmountMinor, true);
+        setField("field-account-code", "conf-account-code", ext.suggestedAccountCode, false);
+
+        // Visibilité des boutons selon statut
+        const validateBtn = document.getElementById("doc-validate-btn");
+        const generateEntryBtn = document.getElementById("doc-generate-draft-entry-btn");
+        const saveCorrectionsBtn = document.getElementById("doc-save-corrections-btn");
+
+        if (selectedDocument.workflowStatus === "VALIDATED") {
+          validateBtn.classList.add("hidden");
+          generateEntryBtn.classList.remove("hidden");
+          saveCorrectionsBtn.setAttribute("disabled", "true");
+        } else if (selectedDocument.workflowStatus === "REJECTED") {
+          validateBtn.classList.add("hidden");
+          generateEntryBtn.classList.add("hidden");
+          saveCorrectionsBtn.removeAttribute("disabled");
+        } else {
+          validateBtn.classList.remove("hidden");
+          generateEntryBtn.classList.add("hidden");
+          saveCorrectionsBtn.removeAttribute("disabled");
+        }
+
+        renderDocumentsTable(cachedDocuments);
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    function closeDocumentDetail() {
+      selectedDocument = null;
+      document.getElementById("document-detail-panel").classList.add("hidden");
+      renderDocumentsTable(cachedDocuments);
+    }
+
+    // Gestion Drag & Drop
+    const dropzone = document.getElementById("doc-dropzone");
+    const fileInput = document.getElementById("doc-file-input");
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = "var(--cn-action)";
+      dropzone.style.background = "rgba(35, 125, 104, 0.05)";
+    });
+    dropzone.addEventListener("dragleave", () => {
+      dropzone.style.borderColor = "var(--cn-border)";
+      dropzone.style.background = "var(--cn-bg-app)";
+    });
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = "var(--cn-border)";
+      dropzone.style.background = "var(--cn-bg-app)";
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+        fileInput.files = e.dataTransfer.files;
+        document.getElementById("doc-dropzone-label").textContent =
+          "Fichier sélectionné : " + fileInput.files[0].name + " (" + (fileInput.files[0].size / 1024).toFixed(1) + " Ko)";
+      }
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files && fileInput.files[0]) {
+        document.getElementById("doc-dropzone-label").textContent =
+          "Fichier sélectionné : " + fileInput.files[0].name + " (" + (fileInput.files[0].size / 1024).toFixed(1) + " Ko)";
+      }
+    });
+
+    // Formulaire d'upload de document
+    document.getElementById("doc-upload-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        showFeedback("Veuillez sélectionner un fichier à importer.", true);
+        return;
+      }
+
+      const category = document.getElementById("doc-upload-category").value;
+      const allowOverride = document.getElementById("doc-allow-override-check").checked;
+      const overrideReason = document.getElementById("doc-override-reason").value;
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const dataUrl = reader.result;
+          const base64Content = String(dataUrl).split(",")[1];
+
+          const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents", {
+            method: "POST",
+            body: JSON.stringify({
+              filename: file.name,
+              mimeType: file.type || "application/pdf",
+              contentBase64: base64Content,
+              category,
+              allowDuplicateOverride: allowOverride,
+              overrideReason: overrideReason || undefined
+            })
+          });
+
+          if (res.duplicateDetected && !allowOverride) {
+            const overrideBox = document.getElementById("doc-duplicate-override-box");
+            overrideBox.classList.remove("hidden");
+            document.getElementById("doc-duplicate-warning-text").textContent =
+              res.heuristicWarning || "Doublon exact détecté (empreinte SHA-256 identique). Cochez ci-dessous pour confirmer l'exception.";
+            showFeedback("Doublon détecté. Saisissez un motif de dérogation si nécessaire.", true);
+            return;
+          }
+
+          document.getElementById("doc-upload-form").reset();
+          document.getElementById("doc-duplicate-override-box").classList.add("hidden");
+          document.getElementById("doc-dropzone-label").textContent =
+            "Glissez-déposez un fichier ici ou cliquez pour parcourir";
+          showFeedback("Document importé et analysé avec succès.");
+          await loadDocumentsList(activeDossierId);
+          if (res.document && res.document.id) {
+            await openDocumentDetail(res.document.id);
+          }
+        } catch (err) {
+          showFeedback(err.message, true);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Filtrage par statut (pills)
+    document.querySelectorAll(".doc-filter-pill").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        document.querySelectorAll(".doc-filter-pill").forEach((p) => p.classList.remove("active"));
+        pill.classList.add("active");
+        currentDocStatusFilter = pill.getAttribute("data-status");
+        loadDocumentsList(activeDossierId);
+      });
+    });
+
+    // Filtrage par catégorie et recherche
+    document.getElementById("doc-filter-category").addEventListener("change", (e) => {
+      currentDocCategoryFilter = e.target.value;
+      loadDocumentsList(activeDossierId);
+    });
+
+    let searchTimer = null;
+    document.getElementById("doc-filter-search").addEventListener("input", (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        currentDocSearch = e.target.value;
+        loadDocumentsList(activeDossierId);
+      }, 250);
+    });
+
+    // Enregistrement des corrections manuelles
+    document.getElementById("doc-correction-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!selectedDocument) return;
+
+      const getNumMinor = (id) => {
+        const v = document.getElementById(id).value;
+        return v ? Math.round(Number(v) * 100) : undefined;
+      };
+
+      const fields = {
+        issuerName: document.getElementById("field-issuer-name").value || undefined,
+        invoiceNumber: document.getElementById("field-invoice-number").value || undefined,
+        invoiceDate: document.getElementById("field-invoice-date").value || undefined,
+        dueDate: document.getElementById("field-due-date").value || undefined,
+        netAmountMinor: getNumMinor("field-net-amount"),
+        vatAmountMinor: getNumMinor("field-vat-amount"),
+        grossAmountMinor: getNumMinor("field-gross-amount"),
+        suggestedAccountCode: document.getElementById("field-account-code").value || undefined
+      };
+
+      try {
+        const res = await apiFetch(
+          "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + selectedDocument.id + "/extraction",
+          {
+            method: "PATCH",
+            body: JSON.stringify({ fields })
+          }
+        );
+        showFeedback("Corrections d'extraction enregistrées (statut: CORRIGÉ).");
+        await openDocumentDetail(selectedDocument.id);
+        await loadDocumentsList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Validation du document
+    document.getElementById("doc-validate-btn").addEventListener("click", async () => {
+      if (!selectedDocument) return;
+      try {
+        await apiFetch(
+          "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + selectedDocument.id + "/validate",
+          { method: "POST" }
+        );
+        showFeedback("Document validé avec succès par l'utilisateur.");
+        await openDocumentDetail(selectedDocument.id);
+        await loadDocumentsList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Rejet du document
+    document.getElementById("doc-reject-btn").addEventListener("click", async () => {
+      if (!selectedDocument) return;
+      const reason = window.prompt("Motif obligatoire de rejet du document (min. 3 caractères) :");
+      if (!reason || reason.trim().length < 3) {
+        showFeedback("Le motif de rejet est obligatoire.", true);
+        return;
+      }
+      try {
+        await apiFetch(
+          "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + selectedDocument.id + "/reject",
+          {
+            method: "POST",
+            body: JSON.stringify({ reason: reason.trim() })
+          }
+        );
+        showFeedback("Document rejeté avec motif enregistré au journal d'audit.");
+        await openDocumentDetail(selectedDocument.id);
+        await loadDocumentsList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Génération d'écriture comptable brouillon
+    document.getElementById("doc-generate-draft-entry-btn").addEventListener("click", async () => {
+      if (!selectedDocument) return;
+      try {
+        const res = await apiFetch(
+          "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + selectedDocument.id + "/create-draft-entry",
+          { method: "POST" }
+        );
+        showFeedback("Écriture brouillon créée avec succès (Pièce: " + res.entry.pieceNumber + ", Journal: " + res.entry.journalCode + ", Total: " + (res.entry.totalDebitMinor / 100).toFixed(2) + " €).");
+        await loadDocumentsList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    // Suppression du document
+    document.getElementById("doc-delete-btn").addEventListener("click", async () => {
+      if (!selectedDocument) return;
+      if (!window.confirm("Confirmez-vous la suppression définitive du document " + selectedDocument.originalFilename + " ?")) {
+        return;
+      }
+      try {
+        await apiFetch(
+          "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/documents/" + selectedDocument.id,
+          { method: "DELETE" }
+        );
+        showFeedback("Document supprimé avec succès.");
+        closeDocumentDetail();
+        await loadDocumentsList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    });
+
+    document.getElementById("doc-detail-close-btn").addEventListener("click", closeDocumentDetail);
 
     bootstrapAuthenticatedApp();
   </script>

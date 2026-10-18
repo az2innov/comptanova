@@ -11,6 +11,7 @@ import {
   assertOrganizationAccess,
   assertDossierAccess,
   AuthorizationError,
+  verifySignedDocumentDownloadToken,
 } from "./auth/auth-service.js";
 import {
   listAccessibleOrganizations,
@@ -29,14 +30,23 @@ import {
   listCountryConfigurations,
   getCountryConfigurationByCode,
   getCountryConfigurationByVersionId,
+  ingestDocumentIntoDossier,
+  listDossierDocuments,
+  getDocumentDetails,
+  updateDocumentExtraction,
+  validateDocument,
+  rejectDocument,
+  createDraftEntryFromDocument,
+  deleteDocument,
 } from "./services/tenant-service.js";
+import { defaultDocumentStorage } from "./services/file-security.js";
 import {
   listAuditLogsForOrganization,
   verifyAuditChainIntegrity,
 } from "./audit/audit-service.js";
 import { runDeterministicSimulation } from "./rules/deterministic-engine.js";
 import { renderAppHtml } from "./ui/app-view.js";
-import { DossierStatus, OrganizationType, SystemRole } from "./domain/types.js";
+import { DossierStatus, OrganizationType, SystemRole, DocumentCategory } from "./domain/types.js";
 import { CurrencyCode } from "./domain/money.js";
 
 /**
@@ -102,14 +112,21 @@ export function resolveClientIp(
   return socketIp;
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(
+  req: http.IncomingMessage,
+  maxBytes: number = 25 * 1024 * 1024
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
     req.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
-      if (totalBytes > 2 * 1024 * 1024) {
-        reject(new Error("Corps de requête trop volumineux (max 2 Mo)."));
+      if (totalBytes > maxBytes) {
+        reject(
+          new Error(
+            `Corps de requête trop volumineux (max ${(maxBytes / (1024 * 1024)).toFixed(0)} Mo).`
+          )
+        );
         req.destroy();
         return;
       }
@@ -650,6 +667,224 @@ export function createAppServer(
               db,
             });
             sendJson(res, 200, result);
+            return;
+          }
+
+          // --- Module 3 : Collecte et Gestion Documentaire (Lot 1.2) ---
+          if (method === "GET" && dossierAction === "documents") {
+            const category = parsedUrl.searchParams.get("category") || undefined;
+            const status = parsedUrl.searchParams.get("status") || undefined;
+            const search = parsedUrl.searchParams.get("q") || undefined;
+            const limit = parsedUrl.searchParams.get("limit")
+              ? Number(parsedUrl.searchParams.get("limit"))
+              : undefined;
+            const offset = parsedUrl.searchParams.get("offset")
+              ? Number(parsedUrl.searchParams.get("offset"))
+              : undefined;
+
+            const result = listDossierDocuments({
+              session,
+              organizationId: orgId,
+              dossierId,
+              category,
+              workflowStatus: status,
+              searchQuery: search,
+              limit,
+              offset,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          if (method === "POST" && dossierAction === "documents") {
+            const body = await readJsonBody(req, 25 * 1024 * 1024);
+            const filename = String(body.filename || "document.pdf");
+            const mimeType = String(body.mimeType || "application/pdf");
+            let buffer: Buffer;
+
+            if (typeof body.contentBase64 === "string") {
+              buffer = Buffer.from(body.contentBase64, "base64");
+            } else if (typeof body.contentUtf8 === "string") {
+              buffer = Buffer.from(body.contentUtf8, "utf-8");
+            } else {
+              throw new Error(
+                "Contenu du document manquant (attendu: contentBase64 ou contentUtf8)."
+              );
+            }
+
+            const allowOverride = Boolean(body.allowDuplicateOverride);
+            const overrideReason = body.overrideReason
+              ? String(body.overrideReason)
+              : undefined;
+            const category = body.category
+              ? (String(body.category) as DocumentCategory)
+              : undefined;
+
+            const result = await ingestDocumentIntoDossier({
+              session,
+              organizationId: orgId,
+              dossierId,
+              originalFilename: filename,
+              mimeType,
+              contentBuffer: buffer,
+              category,
+              allowDuplicateOverride: allowOverride,
+              overrideReason,
+              db,
+            });
+
+            sendJson(res, 201, result as unknown as Record<string, unknown>);
+            return;
+          }
+
+          // Téléchargement sécurisé : GET /api/organizations/:orgId/dossiers/:dossierId/documents/:docId/download
+          const docDownloadMatch = dossierAction.match(/^documents\/([^/]+)\/download$/);
+          if (method === "GET" && docDownloadMatch) {
+            const docId = decodeURIComponent(docDownloadMatch[1]!);
+            const token = parsedUrl.searchParams.get("token");
+
+            let authorized = false;
+            if (token) {
+              const verified = verifySignedDocumentDownloadToken(token);
+              if (
+                verified.valid &&
+                verified.organizationId === orgId &&
+                verified.dossierId === dossierId &&
+                verified.documentId === docId
+              ) {
+                authorized = true;
+              }
+            }
+
+            if (!authorized) {
+              assertDossierAccess({
+                session,
+                organizationId: orgId,
+                dossierId,
+                permission: "VIEW",
+                db,
+              });
+            }
+
+            const docRow = db
+              .prepare(
+                "SELECT * FROM documents WHERE id = ? AND organization_id = ? AND dossier_id = ?"
+              )
+              .get(docId, orgId, dossierId) as any;
+
+            if (!docRow) {
+              sendJson(res, 404, { error: "Document introuvable." });
+              return;
+            }
+
+            const fileBuffer = await defaultDocumentStorage.readFile(docRow.storage_key);
+
+            res.writeHead(200, {
+              "Content-Type": docRow.mime_type,
+              "Content-Length": fileBuffer.byteLength,
+              "Content-Disposition": `attachment; filename="${encodeURIComponent(docRow.original_filename)}"`,
+              "X-Content-Type-Options": "nosniff",
+              "Cache-Control": "private, no-cache, no-store",
+            });
+            res.end(fileBuffer);
+            return;
+          }
+
+          // Correction d'extraction : PATCH /api/organizations/:orgId/dossiers/:dossierId/documents/:docId/extraction
+          const docExtractionMatch = dossierAction.match(/^documents\/([^/]+)\/extraction$/);
+          if (method === "PATCH" && docExtractionMatch) {
+            const docId = decodeURIComponent(docExtractionMatch[1]!);
+            const body = await readJsonBody(req);
+            const fields = (body.fields as any) || body;
+            const updated = updateDocumentExtraction({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              fields,
+              db,
+            });
+            sendJson(res, 200, { document: updated });
+            return;
+          }
+
+          // Validation humaine : POST /api/organizations/:orgId/dossiers/:dossierId/documents/:docId/validate
+          const docValidateMatch = dossierAction.match(/^documents\/([^/]+)\/validate$/);
+          if (method === "POST" && docValidateMatch) {
+            const docId = decodeURIComponent(docValidateMatch[1]!);
+            const validated = validateDocument({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              db,
+            });
+            sendJson(res, 200, { document: validated });
+            return;
+          }
+
+          // Rejet humain avec motif obligatoire : POST /api/organizations/:orgId/dossiers/:dossierId/documents/:docId/reject
+          const docRejectMatch = dossierAction.match(/^documents\/([^/]+)\/reject$/);
+          if (method === "POST" && docRejectMatch) {
+            const docId = decodeURIComponent(docRejectMatch[1]!);
+            const body = await readJsonBody(req);
+            const rejectionReason = String(body.reason || body.rejectionReason || "");
+            const rejected = rejectDocument({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              rejectionReason,
+              db,
+            });
+            sendJson(res, 200, { document: rejected });
+            return;
+          }
+
+          // Génération d'écriture comptable brouillon : POST /api/organizations/:orgId/dossiers/:dossierId/documents/:docId/create-draft-entry
+          const docDraftEntryMatch = dossierAction.match(
+            /^documents\/([^/]+)\/create-draft-entry$/
+          );
+          if (method === "POST" && docDraftEntryMatch) {
+            const docId = decodeURIComponent(docDraftEntryMatch[1]!);
+            const created = createDraftEntryFromDocument({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              db,
+            });
+            sendJson(res, 201, created);
+            return;
+          }
+
+          // Détail d'un document : GET /api/organizations/:orgId/dossiers/:dossierId/documents/:docId
+          const docDetailMatch = dossierAction.match(/^documents\/([^/]+)$/);
+          if (method === "GET" && docDetailMatch) {
+            const docId = decodeURIComponent(docDetailMatch[1]!);
+            const details = getDocumentDetails({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              db,
+            });
+            sendJson(res, 200, details);
+            return;
+          }
+
+          // Suppression d'un document : DELETE /api/organizations/:orgId/dossiers/:dossierId/documents/:docId
+          if (method === "DELETE" && docDetailMatch) {
+            const docId = decodeURIComponent(docDetailMatch[1]!);
+            const deleted = await deleteDocument({
+              session,
+              organizationId: orgId,
+              dossierId,
+              documentId: docId,
+              db,
+            });
+            sendJson(res, 200, deleted);
             return;
           }
         }

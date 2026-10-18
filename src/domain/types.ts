@@ -59,6 +59,7 @@ export type DocumentWorkflowStatus =
   | "PENDING_REVIEW"
   | "CORRECTED"
   | "VALIDATED"
+  | "REJECTED"
   | "EXPORTED";
 
 export type AccountingEntryStatus =
@@ -225,6 +226,12 @@ export interface StoredDocument {
   uploadedByUserId: string;
   validatedByUserId: string | null;
   validatedAt: string | null;
+  rejectionReason?: string | null;
+  rejectedByUserId?: string | null;
+  rejectedAt?: string | null;
+  overrideDuplicateReason?: string | null;
+  heuristicDuplicateOfId?: string | null;
+  quarantineStatus?: "CLEAN" | "QUARANTINED" | "SCANNING";
   retentionUntilDate: string;
   createdAt: string;
   updatedAt: string;

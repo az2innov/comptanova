@@ -336,17 +336,25 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
     sha256_checksum TEXT NOT NULL,
     storage_key TEXT NOT NULL UNIQUE,
     category TEXT NOT NULL CHECK (category IN ('SUPPLIER_INVOICE', 'CUSTOMER_INVOICE', 'CREDIT_NOTE', 'RECEIPT_EXPENSE', 'BANK_STATEMENT', 'PAYMENT_PROOF', 'OTHER')),
-    workflow_status TEXT NOT NULL CHECK (workflow_status IN ('RECEIVED', 'STORED', 'EXTRACTED', 'CHECKED', 'SUGGESTED', 'PENDING_REVIEW', 'CORRECTED', 'VALIDATED', 'EXPORTED')),
+    workflow_status TEXT NOT NULL CHECK (workflow_status IN ('RECEIVED', 'STORED', 'EXTRACTED', 'CHECKED', 'SUGGESTED', 'PENDING_REVIEW', 'CORRECTED', 'VALIDATED', 'REJECTED', 'EXPORTED')),
     extracted_data_json TEXT NOT NULL DEFAULT '{}',
     ai_model_version TEXT,
     rule_version_id TEXT REFERENCES country_config_versions(version_id),
     uploaded_by_user_id TEXT NOT NULL REFERENCES users(id),
     validated_by_user_id TEXT REFERENCES users(id),
     validated_at TEXT,
+    rejection_reason TEXT,
+    rejected_by_user_id TEXT REFERENCES users(id),
+    rejected_at TEXT,
+    override_duplicate_reason TEXT,
+    heuristic_duplicate_of_id TEXT REFERENCES documents(id),
+    quarantine_status TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_status IN ('CLEAN', 'QUARANTINED', 'SCANNING')),
     retention_until_date TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(organization_id, dossier_id, workflow_status);
 
   CREATE TABLE IF NOT EXISTS invoices (
     id TEXT PRIMARY KEY,

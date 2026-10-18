@@ -579,6 +579,60 @@ export const MIGRATIONS: MigrationDefinition[] = [
       ALTER TABLE client_dossiers ADD COLUMN archive_reason TEXT;
     `,
   },
+  {
+    version: "006_phase1_lot1_2_document_lifecycle",
+    description:
+      "Lot 1.2 (Module 3 — Collecte documentaire, OCR et cycle de vie à 6 statuts) : Ajout du statut REJECTED, motifs de rejet, traçabilité de rejet, détection de doublons et statut de quarantaine sur documents.",
+    upSql: `
+      CREATE TABLE documents_new (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        sha256_checksum TEXT NOT NULL,
+        storage_key TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL CHECK (category IN ('SUPPLIER_INVOICE', 'CUSTOMER_INVOICE', 'CREDIT_NOTE', 'RECEIPT_EXPENSE', 'BANK_STATEMENT', 'PAYMENT_PROOF', 'OTHER')),
+        workflow_status TEXT NOT NULL CHECK (workflow_status IN ('RECEIVED', 'STORED', 'EXTRACTED', 'CHECKED', 'SUGGESTED', 'PENDING_REVIEW', 'CORRECTED', 'VALIDATED', 'REJECTED', 'EXPORTED')),
+        extracted_data_json TEXT NOT NULL DEFAULT '{}',
+        ai_model_version TEXT,
+        rule_version_id TEXT REFERENCES country_config_versions(version_id),
+        uploaded_by_user_id TEXT NOT NULL REFERENCES users(id),
+        validated_by_user_id TEXT REFERENCES users(id),
+        validated_at TEXT,
+        rejection_reason TEXT,
+        rejected_by_user_id TEXT REFERENCES users(id),
+        rejected_at TEXT,
+        override_duplicate_reason TEXT,
+        heuristic_duplicate_of_id TEXT REFERENCES documents_new(id),
+        quarantine_status TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_status IN ('CLEAN', 'QUARANTINED', 'SCANNING')),
+        retention_until_date TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO documents_new (
+        id, organization_id, dossier_id, original_filename, mime_type,
+        size_bytes, sha256_checksum, storage_key, category, workflow_status,
+        extracted_data_json, ai_model_version, rule_version_id, uploaded_by_user_id,
+        validated_by_user_id, validated_at, retention_until_date, created_at, updated_at
+      )
+      SELECT
+        id, organization_id, dossier_id, original_filename, mime_type,
+        size_bytes, sha256_checksum, storage_key, category, workflow_status,
+        extracted_data_json, ai_model_version, rule_version_id, uploaded_by_user_id,
+        validated_by_user_id, validated_at, retention_until_date, created_at, updated_at
+      FROM documents;
+
+      DROP TABLE documents;
+      ALTER TABLE documents_new RENAME TO documents;
+
+      CREATE INDEX IF NOT EXISTS idx_documents_org_dossier ON documents(organization_id, dossier_id);
+      CREATE INDEX IF NOT EXISTS idx_documents_checksum ON documents(organization_id, dossier_id, sha256_checksum);
+      CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(organization_id, dossier_id, workflow_status);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync = getDatabase()): {
