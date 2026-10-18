@@ -53,6 +53,10 @@ import {
   generatePrintableInvoiceHtml,
   generateFacturXXml,
 } from "./services/invoicing-service.js";
+import {
+  getDossierDashboardMetrics,
+  getFirmDashboardMetrics,
+} from "./services/dashboard-service.js";
 import { defaultDocumentStorage } from "./services/file-security.js";
 import {
   listAuditLogsForOrganization,
@@ -170,7 +174,7 @@ async function readJsonBody(
 function sendJson(
   res: http.ServerResponse,
   statusCode: number,
-  payload: Record<string, unknown>
+  payload: unknown
 ): void {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -361,10 +365,9 @@ export function createAppServer(
         const subRoute = orgMatch[2]!;
 
         if (method === "GET" && subRoute === "dashboard") {
-          const metrics = getOrganizationDashboardMetrics({
+          const metrics = getFirmDashboardMetrics({
             session,
             organizationId: orgId,
-            platformAdminJustification,
             db,
           });
           sendJson(res, 200, metrics);
@@ -504,6 +507,33 @@ export function createAppServer(
               db,
             });
             sendJson(res, 200, details);
+            return;
+          }
+
+          // Tableau de bord dossier (Vue Entreprise) : GET /api/organizations/:orgId/dossiers/:dossierId/dashboard
+          if (method === "GET" && dossierAction === "dashboard") {
+            const periodType = (parsedUrl.searchParams.get("periodType") || undefined) as any;
+            const year = parsedUrl.searchParams.get("year") ? Number(parsedUrl.searchParams.get("year")) : undefined;
+            const month = parsedUrl.searchParams.get("month") ? Number(parsedUrl.searchParams.get("month")) : undefined;
+            const quarter = parsedUrl.searchParams.get("quarter") ? (Number(parsedUrl.searchParams.get("quarter")) as any) : undefined;
+            const startDate = parsedUrl.searchParams.get("startDate") || undefined;
+            const endDate = parsedUrl.searchParams.get("endDate") || undefined;
+
+            const metrics = getDossierDashboardMetrics({
+              session,
+              organizationId: orgId,
+              dossierId,
+              filter: {
+                periodType,
+                year,
+                month,
+                quarter,
+                startDate,
+                endDate,
+              },
+              db,
+            });
+            sendJson(res, 200, metrics);
             return;
           }
 
@@ -1046,12 +1076,14 @@ export function createAppServer(
             const invoiceId = decodeURIComponent(invoiceCreditNoteMatch[1]!);
             const body = await readJsonBody(req);
             const reason = String(body.reason || "");
+            const partialGrossAmountMinor = body.partialGrossAmountMinor ? Number(body.partialGrossAmountMinor) : undefined;
             const result = createCreditNoteForInvoice({
               session,
               organizationId: orgId,
               dossierId,
               invoiceId,
               reason,
+              partialGrossAmountMinor,
               db,
             });
             sendJson(res, 201, result);

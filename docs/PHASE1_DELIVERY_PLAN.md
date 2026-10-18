@@ -181,63 +181,64 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
      - Conditions de règlement : Date d'échéance, pénalités de retard (taux légal BCE + 10 points ou 3 fois le taux d'intérêt légal), et indemnité forfaitaire pour frais de recouvrement de 40 € (B2B, art. D441-5 C. com.).
    - **Aperçu imprimable** :
      - Rendu HTML propre pour impression (format A4 avec styles CSS d'impression `@media print`), récapitulatif complet de TVA par taux, et mentions légales obligatoires.
-   - **Architecture Facturation Électronique (Factur-X / PDP) en 3 niveaux stricts** :
-     - **Niveau 1** : Facture classique générée par ComptaNova (PDF / visualisation HTML imprimable avec mentions LPF obligatoires).
-     - **Niveau 2** : Fichier Factur-X hybride (génération du flux XML conforme au standard Factur-X / ZUGFeRD sous profil `MINIMUM`, `BASIC` ou `EN16931`), testé techniquement et validable structurellement.
-     - **Niveau 3** : Transmission et réception via une Plateforme de Dématérialisation Partenaire (PDP) ou Portail Public de Facturation (PPF) : ComptaNova n'étant PAS une plateforme agréée, la connectivité PDP/PPF (cycle de vie des statuts de transmission, e-reporting) est formellement identifiée comme un **périmètre distinct**, à qualifier et connecter ultérieurement.
-3. **Dépendances** : Lots 1.1 & 1.2 (commit `ef6625d`).
-4. **Migrations** :
-   - Migration `007_phase1_lot1_3_quotes_and_invoicing` : création des tables `quotes`, `quote_lines`, `invoice_lines`, `invoice_payments`, et enrichissement de la table `invoices` (colonnes `origin_quote_id`, `invoice_status`, `payment_status`, `legal_mentions_json`, etc.).
-5. **API REST exposées** :
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/quotes` & `POST .../quotes`
-   - `GET/PUT/DELETE /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/quotes/:quoteId/convert-to-invoice`
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices` & `POST .../invoices` (création manuelle de facture de vente)
-   - `GET/PUT /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/finalize`
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/credit-note` (annulation par avoir)
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/payments` (enregistrement d'un règlement)
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/printable` (aperçu imprimable)
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/invoices/:invoiceId/facturx-xml` (flux Factur-X XML niveau 2)
-6. **Règles métier & sécurité** :
-   - Monnaie en unités mineures entières, arithmétique exacte sans flottant IEEE-754.
-   - Isolation stricte inter-organisations et contrôle RBAC (`assertDossierAccess`).
-   - Traçabilité inaltérable dans `audit_logs` de chaque action (création, modification, conversion de devis, finalisation, émission d'avoir, enregistrement de paiement).
-7. **Critères d'acceptation** :
-   - 100% des tests passants, matrice d'acceptation validée, non-régression complète.
+    - **Architecture Facturation Électronique (Factur-X / PDP) en 3 niveaux stricts** :
+      - **Niveau 1** : Facture classique générée par ComptaNova (visualisation HTML imprimable `@media print` A4 avec mentions LPF obligatoires).
+      - **Niveau 2** : Fichier Factur-X hybride — **Génération XML préliminaire** (génération du flux XML syntaxique selon la structure EN 16931 sous profil `MINIMUM`, `BASIC` ou `EN16931`). Jusqu'à la validation par des tiers certificateurs et l'incorporation dans un conteneur PDF/A-3 certifié, cette fonctionnalité est rigoureusement qualifiée de « *génération XML préliminaire* » et non de « *Factur-X certifié conforme* ».
+      - **Niveau 3** : Transmission et réception via Plateforme de Dématérialisation Partenaire (PDP) ou Portail Public de Facturation (PPF) : ComptaNova n'étant PAS une PDP agréée, cette connectivité fait l'objet d'un périmètre distinct d'intégration future (voir section dédiée ci-après).
 
 ---
 
-### LOT 1.4 — Module 4 : Saisie Comptable Multi-Lignes en Partie Double, Modèles, Validation Humaine et Extourne (`REVERSED`)
+### PÉRIMÈTRE DISTINCT — RÉFORME FRANÇAISE DE LA FACTURATION ÉLECTRONIQUE (PDP / PPF, STATUTS DU CYCLE DE VIE ET E-REPORTING)
 
-1. **Objectif** : Livrer de bout en bout le **Module 4 (§16)** : création et édition d'écritures comptables multi-lignes en brouillon (`DRAFT`), suggestion d'écriture depuis une facture validée (`AI_SUGGESTION`), utilisation de modèles et duplication d'écritures, contrôle d'équilibre Débit = Crédit en temps réel et côté serveur, validation humaine (`VALIDATED`) par un utilisateur habilité, et procédure d'extourne (`REVERSED`) interdisant toute modification silencieuse d'une écriture validée.
-2. **Périmètre** :
-   - Gestion du **Plan comptable (`chart_of_accounts`)** et des **Journaux (`accounting_journals`)** du dossier (consultation et ajout de comptes auxiliaires/généraux).
-   - Grille de saisie rapide multi-lignes navigable au clavier : sélection du journal (`AC`, `VT`, `BQ`, `OD`, `AN`), date, numéro de pièce, libellé d'écriture, ajout/suppression de lignes (compte général, compte auxiliaire/tiers, libellé, débit, crédit), affichage permanent du **Total Débit**, du **Total Crédit** et de l'**Écart d'équilibre**.
-   - Modèles d'écritures préconfigurés (achat avec TVA, vente avec TVA, règlement bancaire, opération diverse) et fonction **Dupliquer une écriture** vers un nouveau brouillon.
-   - Génération d'une proposition d'écriture (`AI_SUGGESTION`) à partir d'une facture du dossier : l'écriture proposée reste non validée tant qu'un humain autorisé ne la valide pas.
-   - Workflow d'intégrité comptable strict (Section E de la Directive) :
-     - Une écriture `DRAFT` ou `AI_SUGGESTION` peut être modifiée et enregistrée, puis **validée** (`VALIDATED`) uniquement si : (a) elle comporte $\ge 2$ lignes, (b) tous les comptes existent et sont actifs dans `chart_of_accounts`, (c) $\sum \text{Débit} = \sum \text{Crédit} > 0$, (d) l'utilisateur possède la permission `VALIDATE_ACCOUNTING`.
-     - Une écriture `VALIDATED` est **immuable** : toute tentative de `PATCH` ou `DELETE` est refusée par le serveur (`409 Conflict`). Pour la corriger, l'utilisateur autorisé déclenche une **contre-passation / extourne (`POST .../reverse`)** qui marque l'écriture d'origine `REVERSED` et crée transactionnellement l'écriture inverse liée par `reversal_of_entry_id`.
-3. **Dépendances** : Lots 1.1 à 1.3.
-4. **Migrations** :
-   - Les tables `chart_of_accounts`, `accounting_journals`, `accounting_entries` et `accounting_entry_lines` existent déjà. Ajout d'une migration `008_accounting_entries_immutability_and_templates` ajoutant un trigger SQLite/PostgreSQL qui empêche la suppression physique ou la modification des montants/comptes d'une écriture déjà au statut `VALIDATED` (seule la transition `VALIDATED -> REVERSED` ou `VALIDATED -> EXPORTED` étant permise).
-5. **API et interfaces concernées** :
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/chart-of-accounts` & `POST .../chart-of-accounts`
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/journals`
-   - `GET /api/organizations/:orgId/dossiers/:dossierId/entries` (recherche et filtres par journal, période, compte, statut)
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/entries` (création brouillon ou suggestion)
-   - `PUT /api/organizations/:orgId/dossiers/:dossierId/entries/:entryId` (modification d'un brouillon uniquement)
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/entries/:entryId/validate` (validation humaine — permission `VALIDATE_ACCOUNTING`)
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/entries/:entryId/reverse` (extourne traçable avec motif obligatoire)
-   - `POST /api/organizations/:orgId/dossiers/:dossierId/entries/:entryId/duplicate` (duplication en nouveau brouillon)
-6. **Règles métier** :
-   - Vérification serveur systématique : équilibre Débit/Crédit, existence des comptes dans le plan comptable du dossier, validité de la date et interdiction d'auto-validation IA.
-7. **Contrôles de sécurité** :
-   - Permission `EDIT_EXTRACTION` ou `UPLOAD` pour créer/modifier un brouillon ; permission **`VALIDATE_ACCOUNTING`** exigée côté serveur pour valider ou extourner une écriture.
-   - Audit systématique (`ACCOUNTING_ENTRY_CREATED`, `ACCOUNTING_ENTRY_VALIDATED`, `ACCOUNTING_ENTRY_REVERSED`).
-8. **Tests automatisés** :
-   - Suite `src/tests/phase1-lot4-accounting-entries.test.ts` : création d'un brouillon multi-lignes, rejet d'une écriture déséquilibrée ou utilisant un compte inexistant, rejet de validation par un utilisateur sans permission `VALIDATE_ACCOUNTING` (`403`), validation réussie, rejet de toute modification ultérieure de l'écriture validée (`409`), extourne créant l'écriture inverse équilibrée, duplication d'écriture.
+1. **Qualification juridique et technique** : ComptaNova est un logiciel d'assistance comptable et de facturation, et **n'est pas une Plateforme de Dématérialisation Partenaire (PDP) agréée** au sens de l'article 290 B du Code général des impôts.
+2. **Périmètres exclus du cœur applicatif immédiat et réservés aux modules d'interconnexion futurs** :
+   - **Réception des factures électroniques** : La réception légale obligatoire des flux Factur-X, UBL ou CII via raccordement direct au PPF ou via une PDP partenaire.
+   - **Suivi des statuts du cycle de vie de la facture électronique** : Gestion des 4 statuts obligatoires (`DÉPÔT`, `ACHEMINEMENT`, `APPROBATION` / `REFUS`, `PAIEMENT`) et des statuts intermédiaires recommandés par la DGFIP.
+   - **Exigences d'e-Reporting** : Transmission automatisée des données de transaction (ventes B2C et transactions internationales B2B) et des données de paiement (prestations de services) à l'administration fiscale.
+   - **Conteneur PDF/A-3 certifié** : Fusion binaire conforme à la norme ISO 19005-3 intégrant la pièce jointe `factur-x.xml` validée par l'outil de conformité de l'AFEOR / FNFE-MPE.
+3. **Conséquence opérationnelle** : La génération de devis, factures et fichiers XML par ComptaNova ne dispense pas l'entreprise utilisatrice de se conformer aux obligations légales de la réforme par le choix d'une plateforme agréée (PDP) ou du portail public (PPF) pour l'échange de ses factures inter-entreprises.
+
+---
+
+### LOT 1.4 — Module 2 : Tableaux de Bord et Indicateurs de Pilotage (Vue Entreprise & Vue Cabinet, Données 100% Persistées, Filtres Période & Liens d'Action)
+
+1. **Objectif** : Implémenter intégralement le tableau de bord décisionnel de pilotage : calcul en temps réel d'indicateurs financiers, documentaires et comptables issus **exclusivement de données réelles persistées** (sans aucune donnée simulée ou fictive en production), filtres cohérents par dossier et période d'activité, distinction nette Vue Entreprise (dossier) / Vue Cabinet (multi-dossiers), alertes prioritaires cliquables redirigeant directement vers les pièces sources (documents à traiter, factures impayées, anomalies ouvertes), et gestion des 5 états d'interface obligatoires.
+2. **Périmètre fonctionnel** :
+   - **Indicateurs financiers réels et traçables** :
+     - Chiffre d'affaires facturé HT, TVA collectée, Total TTC (somme des factures de vente finalisées et payées de la période, déduction faite des avoirs émis).
+     - Encaissements réels constatés (règlements enregistrés de la période).
+     - Créances clients / Solde restant dû (factures non soldées, mise en évidence des factures en retard avec calcul des jours d'arriéré).
+     - Devis de vente en cours (nombre, statut `DRAFT`/`SENT`/`ACCEPTED`/`CONVERTED`, montant cumulé et taux de transformation en facture).
+     - Dépenses fournisseurs validées de la période (montants HT et TVA extraits et validés).
+   - **Indicateurs documentaires et comptables réels** :
+     - Pièces en attente de revue (`RECEIVED`, `EXTRACTED`, `PENDING_REVIEW`, `CORRECTED`) et pièces rejetées (`REJECTED`).
+     - Statut des écritures comptables du dossier (brouillons vs validées, vérification d'équilibre Débit = Crédit).
+     - Anomalies ouvertes prioritaires (distinctes entre erreurs bloquantes `is_certain_error = 1` et alertes à vérifier).
+   - **Filtres par période et contexte** :
+     - Exercice fiscal en cours, mois sélectionné, trimestre, ou plage personnalisée (`startDate`, `endDate`).
+     - Filtrage strict selon les permissions de l'utilisateur connecté sur le dossier.
+   - **Liens d'action prioritaires (*Actionable Alerts*)** :
+     - Liens directs vers l'onglet Documents avec filtre pré-appliqué sur les pièces à réviser.
+     - Liens directs vers l'onglet Factures pour relance des factures impayées/échues.
+     - Liens directs vers les anomalies ouvertes nécessitant une action corrective.
+   - **Vue Cabinet (synthèse du portefeuille pour les experts/collaborateurs)** :
+     - Vue consolidée des dossiers actifs : nombre de pièces en souffrance, anomalies critiques, échéances de déclaration.
+   - **Transparence et avertissements** :
+     - Mention explicite : *« Indicateurs calculés sur données persistées à titre de pilotage de gestion — ne constituent pas des états financiers certifiés ni un bilan comptable audité. »*
+3. **Dépendances** : Lots 1.1, 1.2, 1.3 (tables `client_dossiers`, `invoices`, `quotes`, `invoice_payments`, `documents`, `accounting_entries`, `anomalies`).
+4. **Migrations** : Aucune nouvelle table requise (agrégations optimisées sur les tables existantes avec index appropriés).
+5. **API REST exposées** :
+   - `GET /api/organizations/:orgId/dashboard` : Métriques consolidées du cabinet (dossiers, pièces en attente, alertes).
+   - `GET /api/organizations/:orgId/dossiers/:dossierId/dashboard` : Métriques détaillées du dossier avec paramètres de période `?periodType=...&year=...&month=...&quarter=...&startDate=...&endDate=...`.
+6. **Règles métier & sécurité** :
+   - Aucune estimation non confirmée présentée comme un résultat comptable certifié.
+   - Contrôle d'accès RBAC (`assertDossierAccess`) : vérification des droits de consultation sur le dossier.
+   - Isolation multi-tenant stricte : un utilisateur de l'organisation A ne peut pas recevoir d'indicateurs de l'organisation B.
+7. **Critères d'acceptation** :
+   - 100% des indicateurs proviennent d'enregistrements SQL réels persistés.
+   - Les totaux financiers concordent au centime près avec la somme des lignes de factures et règlements.
+   - Les 5 états UI (chargement, données disponibles, état vide pédagogique, erreur, accès interdit) sont gérés.
+   - Tests automatisés couvrant les calculs, les filtres, l'isolation et les permissions.
 9. **Tests UX/UI** :
    - Grille de saisie au clavier dans l'onglet `Saisie comptable`, calcul dynamique de l'écart Débit/Crédit, sélecteur de modèles, badge `AI_SUGGESTION` vs `DRAFT` vs `VALIDATED` vs `REVERSED`, et modale de confirmation d'extourne avec motif.
 10. **Critères d'acceptation** :
@@ -349,13 +350,14 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
 
 ---
 
-## PARTIE 3 — RÉCAPITULATIF DE L'ORDRE D'EXÉCUTION ET DEMANDE DE VALIDATION
+## PARTIE 3 — RÉCAPITULATIF DE L'ORDRE D'EXÉCUTION ET SUIVI D'AVANCEMENT
 
-| Lot | Modules couverts (Séquence obligatoire §§31–32) | Nouveaux tests prévus | Statut actuel |
+| Lot | Périmètre et Modules couverts | Tests automatisés associés | Statut d'avancement |
 | :--- | :--- | :--- | :---: |
-| **Lot 1.1** | Étape préalable (Design System, Palette §5, Logo, Navigation 10 entrées) + **Module 1 (Dossiers clients complets)** | `phase1-lot1-dossiers-ui.test.ts` | Prêt à démarrer |
-| **Lot 1.2** | **Module 2 (Documents privés, Extraction IA, Revue côte-à-côte, Correction & Validation humaine)** | `phase1-lot2-documents-ai.test.ts` | Planifié après Lot 1.1 |
-| **Lot 1.3** | **Module 3 (Import transactionnel et idempotent des listings de factures & avoirs)** | `phase1-lot3-invoice-imports.test.ts` | Planifié après Lot 1.2 |
-| **Lot 1.4** | **Module 4 (Saisie comptable multi-lignes, PCG/Journaux, Modèles, Validation & Extourne)** | `phase1-lot4-accounting-entries.test.ts` | Planifié après Lot 1.3 |
-| **Lot 1.5** | **Module 5 (Import CSV/OFX & Rapprochement bancaire)** + **Module 6 (10 Contrôles & Anomalies)** | `phase1-lot5-bank-and-anomalies.test.ts` | Planifié après Lot 1.4 |
-| **Lot 1.6** | **Module 7 (Simulations)** + **Module 8 (Tableaux de bord)** + **Module 9 (Exports CSV/FEC)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot6-simulations-exports-e2e.test.ts` | Planifié après Lot 1.5 |
+| **Lot 1.1** | Design System officiel §5, Layout 10 entrées §8 & **Module 1 (Gestion complète des dossiers clients §9)** | `phase1-lot1-1.test.ts` (4 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`4bd790c`) |
+| **Lot 1.2** | **Module 3 (Collecte documentaire, validation fichiers, stockage privé, OCR & 6 statuts §14)** | `phase1-lot1-2.test.ts` (8 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`ef6625d` / `bf9e397`) |
+| **Lot 1.3** | **Module 4 (Facturation des ventes, Devis, Transformation, Règlements, Factur-X préliminaire §12)** | `phase1-lot1-3.test.ts` (12 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`cc4dcb3`) |
+| **Lot 1.4** | **Module 2 (Tableaux de bord et indicateurs de pilotage, Données 100% persistées, Filtres période & Liens §20)** | `phase1-lot1-4.test.ts` (8 sous-tests) | **EN COURS D'EXÉCUTION** |
+| **Lot 1.5** | **Module 5 (Saisie comptable multi-lignes en partie double, PCG/Journaux, Modèles, Validation & Extourne §16)** | `phase1-lot1-5.test.ts` | Planifié après Lot 1.4 |
+| **Lot 1.6** | **Module 6 (Import CSV/OFX & Rapprochement bancaire §17)** + **Module 7 (10 Règles de Contrôles & Anomalies §18)** | `phase1-lot1-6.test.ts` | Planifié après Lot 1.5 |
+| **Lot 1.7** | **Module 8 (Simulations indicatives §19)** + **Module 9 (Exports CSV/FEC §21)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot1-7.test.ts` | Clôture Phase 1 |

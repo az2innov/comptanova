@@ -353,6 +353,76 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         ('line-pg-2', 'org-pg-1', 'dossier-pg-1', 'entry-pg-1', 2, '706000', 'Prestation HT', 0, 100000, 'EUR', 2, '2026-10-18T00:00:00Z'),
         ('line-pg-3', 'org-pg-1', 'dossier-pg-1', 'entry-pg-1', 3, '445710', 'TVA collectée 20%', 0, 20000, 'EUR', 2, '2026-10-18T00:00:00Z');
 
+      -- Test fonctionnel PostgreSQL 16 : Numérotation, Devis, Factures, Lignes, Règlements et Avoir (Module 4)
+      INSERT INTO dossier_numbering_sequences (
+        id, organization_id, dossier_id, sequence_type, prefix, fiscal_year, last_number, created_at, updated_at
+      ) VALUES (
+        'seq-pg-1', 'org-pg-1', 'dossier-pg-1', 'INVOICE', 'FAC', 2026, 1, '2026-10-18T00:00:00Z', '2026-10-18T00:00:00Z'
+      );
+
+      INSERT INTO quotes (
+        id, organization_id, dossier_id, quote_number, quote_status,
+        third_party_name, issue_date, validity_date, currency, currency_minor_unit_exponent,
+        total_net_minor, total_vat_minor, total_gross_minor, created_by_user_id, created_at, updated_at
+      ) VALUES (
+        'quote-pg-1', 'org-pg-1', 'dossier-pg-1', 'DEV-2026-0001', 'DRAFT',
+        'Client Test PG', '2026-10-18', '2026-11-18', 'EUR', 2,
+        100000, 20000, 120000, 'user-pg-1', '2026-10-18T00:00:00Z', '2026-10-18T00:00:00Z'
+      );
+
+      INSERT INTO quote_lines (
+        id, quote_id, line_number, description, quantity_minor, unit_price_net_minor,
+        discount_rate_bps, vat_rate_bps, total_net_minor, total_vat_minor, total_gross_minor, general_account_code, created_at
+      ) VALUES (
+        'qline-pg-1', 'quote-pg-1', 1, 'Prestation conseil PG', 100, 100000,
+        0, 2000, 100000, 20000, 120000, '706000', '2026-10-18T00:00:00Z'
+      );
+
+      INSERT INTO invoices (
+        id, organization_id, dossier_id, direction, invoice_number, third_party_name,
+        issue_date, due_date, net_amount_minor, vat_amount_minor, gross_amount_minor,
+        paid_amount_minor, currency, currency_minor_unit_exponent, payment_status,
+        validation_status, rule_version_id, origin_quote_id, is_b2b, invoice_status,
+        finalized_at, finalized_by_user_id, created_at, updated_at
+      ) VALUES (
+        'inv-pg-1', 'org-pg-1', 'dossier-pg-1', 'ISSUED', 'FAC-2026-0001', 'Client Test PG',
+        '2026-10-18', '2026-11-17', 100000, 20000, 120000,
+        50000, 'EUR', 2, 'PARTIALLY_PAID',
+        'VALIDATED_BY_HUMAN', 'FR-PCG-2026.1', 'quote-pg-1', 1, 'FINALIZED',
+        '2026-10-18T00:00:00Z', 'user-pg-1', '2026-10-18T00:00:00Z', '2026-10-18T00:00:00Z'
+      );
+
+      INSERT INTO invoice_lines (
+        id, invoice_id, line_number, description, quantity_minor, unit_price_net_minor,
+        discount_rate_bps, vat_rate_bps, total_net_minor, total_vat_minor, total_gross_minor, general_account_code, created_at
+      ) VALUES (
+        'iline-pg-1', 'inv-pg-1', 1, 'Prestation conseil PG', 100, 100000,
+        0, 2000, 100000, 20000, 120000, '706000', '2026-10-18T00:00:00Z'
+      );
+
+      INSERT INTO invoice_payments (
+        id, organization_id, dossier_id, invoice_id, payment_date, amount_minor,
+        currency, payment_method, transaction_reference, recorded_by_user_id, created_at
+      ) VALUES (
+        'pay-pg-1', 'org-pg-1', 'dossier-pg-1', 'inv-pg-1', '2026-10-18', 50000,
+        'EUR', 'BANK_TRANSFER', 'VIR-PG-001', 'user-pg-1', '2026-10-18T00:00:00Z'
+      );
+
+      -- Insertion Avoir partiel sur PostgreSQL 16
+      INSERT INTO invoices (
+        id, organization_id, dossier_id, direction, invoice_number, third_party_name,
+        issue_date, due_date, net_amount_minor, vat_amount_minor, gross_amount_minor,
+        paid_amount_minor, currency, currency_minor_unit_exponent, payment_status,
+        validation_status, rule_version_id, credit_note_for_invoice_id, is_b2b, invoice_status,
+        finalized_at, finalized_by_user_id, created_at, updated_at
+      ) VALUES (
+        'av-pg-1', 'org-pg-1', 'dossier-pg-1', 'CREDIT_NOTE', 'AV-2026-0001', 'Client Test PG',
+        '2026-10-18', '2026-10-18', -25000, -5000, -30000,
+        -30000, 'EUR', 2, 'PAID',
+        'VALIDATED_BY_HUMAN', 'FR-PCG-2026.1', 'inv-pg-1', 1, 'FINALIZED',
+        '2026-10-18T00:00:00Z', 'user-pg-1', '2026-10-18T00:00:00Z', '2026-10-18T00:00:00Z'
+      );
+
       -- SEC-OPEN-04 sur PostgreSQL 16 : Insertion d'une ligne d'audit et test du trigger trg_pg_audit_logs_immutable
       INSERT INTO audit_logs (
         id, organization_id, dossier_id, actor_user_id, actor_role, action,
@@ -390,6 +460,12 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       $$;
 
       -- Vérifie que la suppression d'un utilisateur ne provoque pas d'UPDATE implicite sur audit_logs et conserve l'ID historique
+      DELETE FROM quote_lines WHERE quote_id = 'quote-pg-1';
+      DELETE FROM quotes WHERE id = 'quote-pg-1';
+      DELETE FROM invoice_payments WHERE invoice_id = 'inv-pg-1';
+      DELETE FROM invoice_lines WHERE invoice_id = 'inv-pg-1';
+      DELETE FROM invoices WHERE id IN ('inv-pg-1', 'av-pg-1');
+      DELETE FROM dossier_numbering_sequences WHERE id = 'seq-pg-1';
       DELETE FROM accounting_entry_lines WHERE entry_id = 'entry-pg-1';
       DELETE FROM accounting_entries WHERE id = 'entry-pg-1';
       DELETE FROM users WHERE id = 'user-pg-1';

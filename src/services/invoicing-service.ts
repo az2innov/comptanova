@@ -907,10 +907,12 @@ export function createCreditNoteForInvoice(params: {
   dossierId: string;
   invoiceId: string;
   reason: string;
+  partialGrossAmountMinor?: number;
   db?: DatabaseSync;
 }): {
   creditNote: SalesInvoice;
   originalInvoice: SalesInvoice;
+  isPartial: boolean;
 } {
   const db = params.db ?? getDatabase();
   assertDossierAccess({
@@ -949,6 +951,25 @@ export function createCreditNoteForInvoice(params: {
     throw new Error("Impossible d'émettre un avoir pour annuler un avoir.");
   }
 
+  const isPartial =
+    params.partialGrossAmountMinor !== undefined &&
+    params.partialGrossAmountMinor !== null &&
+    params.partialGrossAmountMinor < original.grossAmountMinor;
+
+  if (params.partialGrossAmountMinor !== undefined && params.partialGrossAmountMinor !== null) {
+    if (!Number.isSafeInteger(params.partialGrossAmountMinor) || params.partialGrossAmountMinor <= 0) {
+      throw new Error("Le montant d'un avoir partiel doit être un entier strictement positif.");
+    }
+    if (params.partialGrossAmountMinor > original.grossAmountMinor) {
+      throw new Error("Le montant d'un avoir partiel ne peut pas excéder le montant total TTC de la facture d'origine.");
+    }
+  }
+
+  const grossAmountMinor = isPartial ? params.partialGrossAmountMinor! : original.grossAmountMinor;
+  const ratio = grossAmountMinor / original.grossAmountMinor;
+  const netAmountMinor = isPartial ? Math.round(original.netAmountMinor * ratio) : original.netAmountMinor;
+  const vatAmountMinor = isPartial ? grossAmountMinor - netAmountMinor : original.vatAmountMinor;
+
   const fiscalYear = Number.parseInt(original.issueDate.slice(0, 4), 10) || new Date().getUTCFullYear();
   const creditNoteNumber = getNextSequenceNumber({
     organizationId: params.organizationId,
@@ -984,10 +1005,10 @@ export function createCreditNoteForInvoice(params: {
     original.thirdPartyName,
     now.slice(0, 10),
     now.slice(0, 10),
-    -Math.abs(original.netAmountMinor),
-    -Math.abs(original.vatAmountMinor),
-    -Math.abs(original.grossAmountMinor),
-    -Math.abs(original.grossAmountMinor),
+    -Math.abs(netAmountMinor),
+    -Math.abs(vatAmountMinor),
+    -Math.abs(grossAmountMinor),
+    -Math.abs(grossAmountMinor),
     original.currency,
     original.ruleVersionId,
     original.id,
@@ -995,6 +1016,8 @@ export function createCreditNoteForInvoice(params: {
       ...original.legalMentions,
       cancellationReason: params.reason.trim(),
       originalInvoiceNumber: original.invoiceNumber,
+      isPartialCreditNote: isPartial,
+      partialAmountMinor: isPartial ? grossAmountMinor : undefined,
     }),
     original.thirdPartyId || null,
     original.thirdPartyAddress || null,
@@ -1006,7 +1029,6 @@ export function createCreditNoteForInvoice(params: {
     now
   );
 
-  // Duplication des lignes en montants négatifs
   const insertLine = db.prepare(
     `INSERT INTO invoice_lines (
       id, invoice_id, line_number, description, quantity_minor,
@@ -1015,30 +1037,75 @@ export function createCreditNoteForInvoice(params: {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
-  (original.lines || []).forEach((l) => {
+  if (isPartial) {
     insertLine.run(
       crypto.randomUUID(),
       creditNoteId,
-      l.lineNumber,
-      `Annulation : ${l.description}`,
-      l.quantityMinor,
-      l.unitPriceNetMinor,
-      l.discountRateBps,
-      l.vatRateBps,
-      -Math.abs(l.totalNetMinor),
-      -Math.abs(l.totalVatMinor),
-      -Math.abs(l.totalGrossMinor),
-      l.generalAccountCode,
+      1,
+      `Avoir partiel sur facture ${original.invoiceNumber} : ${params.reason.trim()}`,
+      100,
+      netAmountMinor,
+      0,
+      Math.round((vatAmountMinor / (netAmountMinor || 1)) * 10000) || 2000,
+      -Math.abs(netAmountMinor),
+      -Math.abs(vatAmountMinor),
+      -Math.abs(grossAmountMinor),
+      "706000",
       now
     );
-  });
+  } else {
+    (original.lines || []).forEach((l) => {
+      insertLine.run(
+        crypto.randomUUID(),
+        creditNoteId,
+        l.lineNumber,
+        `Annulation : ${l.description}`,
+        l.quantityMinor,
+        l.unitPriceNetMinor,
+        l.discountRateBps,
+        l.vatRateBps,
+        -Math.abs(l.totalNetMinor),
+        -Math.abs(l.totalVatMinor),
+        -Math.abs(l.totalGrossMinor),
+        l.generalAccountCode,
+        now
+      );
+    });
+  }
 
-  // Mise à jour de la facture originale : annulée par l'avoir
-  db.prepare(
-    `UPDATE invoices
-     SET invoice_status = 'CANCELLED', cancelled_by_credit_note_id = ?, updated_at = ?
-     WHERE id = ?`
-  ).run(creditNoteId, now, original.id);
+  // Si avoir total : facture d'origine marquée CANCELLED
+  // Si avoir partiel : facture d'origine NON annulée, enregistrement de l'avoir partiel dans l'historique
+  if (!isPartial) {
+    db.prepare(
+      `UPDATE invoices
+       SET invoice_status = 'CANCELLED', cancelled_by_credit_note_id = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(creditNoteId, now, original.id);
+  } else {
+    const currentMentions = (original.legalMentions || {}) as any;
+    const partialCreditNotes = Array.isArray(currentMentions.partialCreditNotes)
+      ? currentMentions.partialCreditNotes
+      : [];
+    partialCreditNotes.push({
+      id: creditNoteId,
+      creditNoteNumber,
+      amountMinor: grossAmountMinor,
+      reason: params.reason.trim(),
+      issuedAt: now,
+    });
+    db.prepare(
+      `UPDATE invoices
+       SET legal_mentions_json = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(
+      JSON.stringify({
+        ...currentMentions,
+        partialCreditNotes,
+      }),
+      now,
+      original.id
+    );
+  }
 
   recordAuditLog(
     {
@@ -1046,7 +1113,7 @@ export function createCreditNoteForInvoice(params: {
       dossierId: params.dossierId,
       actorUserId: userId,
       actorRole: "AUTHENTICATED_USER",
-      action: "CREDIT_NOTE_ISSUED",
+      action: isPartial ? "PARTIAL_CREDIT_NOTE_ISSUED" : "CREDIT_NOTE_ISSUED",
       targetEntityType: "INVOICE",
       targetEntityId: creditNoteId,
       justification: params.reason.trim(),
@@ -1054,7 +1121,8 @@ export function createCreditNoteForInvoice(params: {
         creditNoteNumber,
         originalInvoiceId: original.id,
         originalInvoiceNumber: original.invoiceNumber,
-        cancelledAmountGrossMinor: original.grossAmountMinor,
+        isPartial,
+        grossAmountMinor,
       },
     },
     db
@@ -1075,6 +1143,7 @@ export function createCreditNoteForInvoice(params: {
       invoiceId: original.id,
       db,
     }),
+    isPartial,
   };
 }
 
@@ -1571,8 +1640,14 @@ export function generatePrintableInvoiceHtml(params: {
 // --- 7. FACTURATION ÉLECTRONIQUE (FACTUR-X XML NIVEAU 2) & SPÉCIFICATION PDP (NIVEAU 3) ---
 
 /**
- * Génère le fichier XML conforme au standard Factur-X / ZUGFeRD 2.2 (Niveau 2).
+ * Génération préliminaire du flux XML selon la norme Factur-X / ZUGFeRD 2.2 / EN 16931 (Niveau 2).
  * Profils supportés : MINIMUM, BASIC, EN16931.
+ *
+ * NOTE RÉGLEMENTAIRE ET TECHNIQUE :
+ * Cette fonction génère la structure syntaxique XML normalisée. Conformément aux réserves d'audit
+ * et jusqu'à validation par validateurs externes certifiés (VeraPDF, Schematron FNFE-MPE)
+ * et incorporation dans un conteneur binaire certifié PDF/A-3, cette fonctionnalité constitue une
+ * "GÉNÉRATION XML PRÉLIMINAIRE" et ne remplace pas une certification Factur-X complète en production.
  */
 export function generateFacturXXml(params: {
   invoice: SalesInvoice;

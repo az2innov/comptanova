@@ -200,18 +200,146 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       </div>
       <div id="global-error-state" class="cn-state-box cn-state-error hidden" role="alert"></div>
 
-      <!-- ONGLET 1 : TABLEAU DE BORD -->
+      <!-- ONGLET 1 : MODULE 2 — TABLEAU DE BORD ET INDICATEURS DE PILOTAGE (§20) -->
       <section id="tab-dashboard" class="tab-panel">
-        <div class="kpi-grid" id="dashboard-kpis"></div>
-        <div class="card">
-          <h3>Architecture Internationale &amp; Charte Graphique Unifiée (Phase 1 Section 5)</h3>
-          <p style="font-size:0.9rem; color:var(--cn-text-secondary);">
-            Prise en charge native des devises à 0 décimale (XOF, JPY), 2 décimales (EUR, USD, MAD, AED, SAR) et 3 décimales (TND, BHD, OMR, KWD), de l'auto-initialisation idempotente du Plan Comptable Général (PCG) et des journaux standards (<code>ACH</code>, <code>VEN</code>, <code>BQ</code>, <code>OD</code>, <code>AN</code>).
-          </p>
-          <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.75rem;">
-            <span class="badge badge-valid">VALIDATED_BY_HUMAN : Donnée comptable validée</span>
-            <span class="badge badge-ai">PROPOSED_BY_AI / NEEDS_HUMAN_REVIEW : Suggestion IA</span>
-            <span class="badge badge-draft">COMPUTED_INDICATIVE : Simulation déterministe provisoire</span>
+        <!-- Barre d'outils et sélecteur de vue (Dossier vs Cabinet) et de période -->
+        <div class="card" style="margin-bottom:1.25rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+            <div>
+              <h3 style="margin:0;">Module 2 — Tableau de Bord et Pilotage de Gestion</h3>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin:0.25rem 0 0 0;">
+                Indicateurs décisionnels issus exclusivement des données réelles persistées (ventes, dépenses, pièces, écritures et anomalies).
+              </p>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+              <div style="display:inline-flex; border:1px solid var(--cn-border); border-radius:4px; overflow:hidden;">
+                <button type="button" id="btn-dash-view-dossier" class="btn-secondary" style="border:none; border-radius:0; padding:6px 12px; font-size:0.85rem; font-weight:600; background:var(--cn-brand-primary); color:var(--cn-surface);">Vue Dossier</button>
+                <button type="button" id="btn-dash-view-firm" class="btn-secondary" style="border:none; border-radius:0; padding:6px 12px; font-size:0.85rem; font-weight:600; background:var(--cn-surface-alt); color:var(--cn-text);">Vue Cabinet</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:0.5rem;">
+                <label for="dash-period-select" style="font-size:0.85rem; font-weight:600; margin:0;">Période :</label>
+                <select id="dash-period-select" style="padding:5px 8px; font-size:0.85rem; width:auto;">
+                  <option value="ALL">Toute la période</option>
+                  <option value="FISCAL_YEAR" selected>Exercice en cours</option>
+                  <option value="QUARTER">Ce trimestre</option>
+                  <option value="MONTH">Ce mois</option>
+                </select>
+                <button type="button" id="btn-dash-refresh" class="btn-secondary" style="padding:5px 10px; font-size:0.85rem;">Actualiser</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5 États UI : Chargement, Erreur, État vide, Accès interdit, et Contenu -->
+        <div id="dash-loading-state" class="cn-state-box cn-state-loading hidden">
+          Chargement des indicateurs de pilotage en temps réel...
+        </div>
+        <div id="dash-error-state" class="cn-state-box cn-state-error hidden" role="alert"></div>
+        <div id="dash-forbidden-state" class="cn-state-box cn-state-forbidden hidden" role="note">
+          <strong>Accès restreint :</strong> Vous ne disposez pas des permissions nécessaires pour consulter les métriques de ce dossier.
+        </div>
+        <div id="dash-empty-state" class="cn-state-box cn-state-empty hidden">
+          <strong>Dossier en attente d'activité comptable :</strong> Aucune facture, pièce justificative ou écriture n'est enregistrée pour cette période. Commencez par déposer une pièce dans l'onglet <em>Documents</em> ou émettre un devis dans l'onglet <em>Factures</em>.
+        </div>
+
+        <!-- Conteneur principal du tableau de bord -->
+        <div id="dash-content-container">
+          <!-- VUE 1 : DOSSIER ACTIF (PILOTAGE ENTREPRISE) -->
+          <div id="dash-dossier-view">
+            <!-- Grille de 6 KPI Décisionnels -->
+            <div class="kpi-grid" id="dashboard-kpis">
+              <div class="kpi-box" id="kpi-box-turnover">
+                <div class="kpi-label">Chiffre d'Affaires HT Facturé</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-turnover">0,00 €</div>
+                <div style="font-size:0.75rem; color:var(--cn-text-secondary); margin-top:4px;" id="kpi-sub-turnover">TVA collectée : 0,00 €</div>
+              </div>
+              <div class="kpi-box" id="kpi-box-collections">
+                <div class="kpi-label">Règlements Encaissés</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-collections">0,00 €</div>
+                <div style="font-size:0.75rem; color:var(--cn-text-secondary); margin-top:4px;" id="kpi-sub-collections">Sur factures de la période</div>
+              </div>
+              <div class="kpi-box" id="kpi-box-remaining">
+                <div class="kpi-label">Créances Clients en Attente</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-remaining">0,00 €</div>
+                <div style="font-size:0.75rem; color:var(--cn-status-error); margin-top:4px;" id="kpi-sub-remaining">Dont 0 échue(s)</div>
+              </div>
+              <div class="kpi-box" id="kpi-box-expenses">
+                <div class="kpi-label">Dépenses Fournisseurs HT</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-expenses">0,00 €</div>
+                <div style="font-size:0.75rem; color:var(--cn-text-secondary); margin-top:4px;" id="kpi-sub-expenses">Pièces validées</div>
+              </div>
+              <div class="kpi-box" id="kpi-box-quotes">
+                <div class="kpi-label">Devis &amp; Transformation</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-quotes">0 devis</div>
+                <div style="font-size:0.75rem; color:var(--cn-brand-primary); margin-top:4px;" id="kpi-sub-quotes">Taux de conversion : 0 %</div>
+              </div>
+              <div class="kpi-box" id="kpi-box-anomalies">
+                <div class="kpi-label">Contrôles &amp; Anomalies</div>
+                <div class="kpi-value font-mono-tabular" id="kpi-val-anomalies">0 alerte</div>
+                <div style="font-size:0.75rem; color:var(--cn-status-error); margin-top:4px;" id="kpi-sub-anomalies">0 critique(s) bloquante(s)</div>
+              </div>
+            </div>
+
+            <!-- Actions et Alertes Prioritaires (Actionable Alerts) -->
+            <div class="card" id="dash-action-alerts-card" style="margin-top:1.25rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+                <h4 style="margin:0;">Actions &amp; Alertes Prioritaires</h4>
+                <span class="badge badge-ai" id="dash-alerts-count-badge">0 action requise</span>
+              </div>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin-bottom:1rem;">
+                Points d'attention nécessitant une intervention : relances de factures échues, justificatifs en attente de révision ou anomalies comptables.
+              </p>
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:110px;">Priorité</th>
+                      <th>Élément concerné</th>
+                      <th>Détails &amp; Contexte</th>
+                      <th style="width:130px; text-align:right;">Montant</th>
+                      <th style="width:110px;">Échéance</th>
+                      <th style="width:130px; text-align:center;">Action directe</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dash-alerts-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- VUE 2 : CABINET (PORTEFEUILLE MULTI-DOSSIERS) -->
+          <div id="dash-firm-view" class="hidden">
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.75rem;">
+                <h4 style="margin:0;">Portefeuille des Dossiers Clients</h4>
+                <span class="badge badge-valid" id="firm-active-dossiers-badge">0 dossiers actifs</span>
+              </div>
+              <p style="font-size:0.85rem; color:var(--cn-text-secondary); margin-bottom:1rem;">
+                Vue consolidée pour les experts et collaborateurs : suivi des pièces en attente de traitement, des créances clients et des anomalies ouvertes par dossier.
+              </p>
+              <div class="table-responsive">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:120px;">Code Dossier</th>
+                      <th>Raison Sociale</th>
+                      <th style="width:80px;">Devise</th>
+                      <th style="width:130px; text-align:center;">Pièces à traiter</th>
+                      <th style="width:130px; text-align:center;">Factures impayées</th>
+                      <th style="width:140px; text-align:right;">Créances en attente</th>
+                      <th style="width:110px; text-align:center;">Anomalies</th>
+                      <th style="width:100px;">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dash-firm-dossiers-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Avertissement de Non-Certification -->
+          <div class="card" style="margin-top:1.25rem; font-size:0.82rem; color:var(--cn-text-secondary); background:var(--cn-surface-alt); border-left:3px solid var(--cn-brand-primary);">
+            <strong>Notice de pilotage de gestion :</strong> Les indicateurs ci-dessus sont calculés en temps réel à partir des données réelles enregistrées dans le dossier. Ils ont une finalité exclusive de pilotage et d'assistance de gestion, et ne constituent en aucun cas des états financiers certifiés, un bilan comptable audité ou une liasse fiscale validée.
           </div>
         </div>
       </section>
@@ -1324,6 +1452,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       document.querySelectorAll(".tab-panel").forEach((p) => {
         p.classList.toggle("hidden", p.id !== targetTabId);
       });
+      if (targetTabId === "tab-dashboard") {
+        loadDashboardData();
+      }
       if (targetTabId === "tab-documents") {
         if (activeDossierId) {
           loadDocumentsList(activeDossierId);
@@ -1349,6 +1480,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       activeDossierId = e.target.value;
       localStorage.setItem("active_dossier_id", activeDossierId);
       updateActiveDossierStatusBadge();
+      if (!document.getElementById("tab-dashboard").classList.contains("hidden")) {
+        await loadDashboardData();
+      }
       if (!document.getElementById("dossier-detail-panel").classList.contains("hidden")) {
         await loadDossierDetails(activeDossierId);
       }
@@ -1480,19 +1614,6 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           " | Juridiction fiscale: " + (dash.organization.primaryTaxJurisdictionCode || dash.organization.countryCode) +
           " | Devise: " + dash.organization.defaultCurrency;
 
-        const kpiContainer = document.getElementById("dashboard-kpis");
-        const kpis = [
-          { label: d.kpiActiveDossiers, value: dash.activeDossiersCount },
-          { label: d.kpiAuthorizedUsers, value: dash.membersCount },
-          { label: d.kpiDocsPendingReview, value: dash.documentsPendingReviewCount },
-          { label: d.kpiDocsValidated, value: dash.documentsValidatedCount },
-          { label: d.kpiEntriesDraftOrAi, value: dash.draftOrSuggestedEntriesCount },
-          { label: d.kpiAuditEvents, value: dash.auditEventsCount }
-        ];
-        kpiContainer.innerHTML = kpis.map((k) =>
-          '<div class="kpi-box"><div class="kpi-label">' + k.label + '</div><div class="kpi-value">' + k.value + '</div></div>'
-        ).join("");
-
         const dossiersRes = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers");
         cachedDossiers = dossiersRes.dossiers || [];
 
@@ -1501,6 +1622,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         }
         renderActiveDossierSelector();
         applyDossiersFilters();
+        await loadDashboardData();
 
         const membersRes = await apiFetch("/api/organizations/" + activeOrgId + "/members");
         cachedMembers = membersRes.members || [];
@@ -1536,6 +1658,187 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         loadingEl.classList.add("hidden");
       }
     }
+
+    let activeDashView = "DOSSIER";
+
+    function setDashView(view) {
+      activeDashView = view;
+      const isDossier = view === "DOSSIER";
+      const btnDossier = document.getElementById("btn-dash-view-dossier");
+      const btnFirm = document.getElementById("btn-dash-view-firm");
+      if (btnDossier && btnFirm) {
+        btnDossier.style.background = isDossier ? "var(--cn-brand-primary)" : "var(--cn-surface-alt)";
+        btnDossier.style.color = isDossier ? "var(--cn-surface)" : "var(--cn-text)";
+        btnFirm.style.background = !isDossier ? "var(--cn-brand-primary)" : "var(--cn-surface-alt)";
+        btnFirm.style.color = !isDossier ? "var(--cn-surface)" : "var(--cn-text)";
+      }
+      document.getElementById("dash-dossier-view").classList.toggle("hidden", !isDossier);
+      document.getElementById("dash-firm-view").classList.toggle("hidden", isDossier);
+      loadDashboardData();
+    }
+
+    async function loadDashboardData() {
+      if (!activeOrgId) return;
+
+      const loadingEl = document.getElementById("dash-loading-state");
+      const errorEl = document.getElementById("dash-error-state");
+      const forbiddenEl = document.getElementById("dash-forbidden-state");
+      const emptyEl = document.getElementById("dash-empty-state");
+      const contentEl = document.getElementById("dash-content-container");
+
+      loadingEl.classList.remove("hidden");
+      errorEl.classList.add("hidden");
+      forbiddenEl.classList.add("hidden");
+      emptyEl.classList.add("hidden");
+
+      try {
+        if (activeDashView === "FIRM") {
+          contentEl.classList.remove("hidden");
+          const dash = await apiFetch("/api/organizations/" + activeOrgId + "/dashboard");
+          const activeCountBadge = document.getElementById("firm-active-dossiers-badge");
+          if (activeCountBadge) {
+            activeCountBadge.textContent =
+              dash.activeDossiersCount + " dossier(s) actif(s) sur " + (dash.dossiersSummary || []).length;
+          }
+
+          const tbody = document.getElementById("dash-firm-dossiers-tbody");
+          const summaries = dash.dossiersSummary || [];
+          if (summaries.length === 0) {
+            tbody.innerHTML = "<tr><td colspan='8' style='text-align:center; padding:1rem; color:var(--cn-text-secondary);'>Aucun dossier dans le portefeuille.</td></tr>";
+          } else {
+            tbody.innerHTML = summaries.map((d) => {
+              const pendingBadge = d.pendingDocumentsCount > 0
+                ? "<span class='badge badge-ai'>" + d.pendingDocumentsCount + "</span>"
+                : "<span class='badge badge-valid'>0</span>";
+              const unpaidBadge = d.unpaidInvoicesCount > 0
+                ? "<span class='badge badge-ai'>" + d.unpaidInvoicesCount + "</span>"
+                : "<span class='badge badge-valid'>0</span>";
+              const anomBadge = d.openAnomaliesCount > 0
+                ? "<span class='badge badge-danger'>" + d.openAnomaliesCount + "</span>"
+                : "<span class='badge badge-valid'>0</span>";
+              const dueStr = (d.remainingDueMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + d.currency;
+              return "<tr>" +
+                "<td><code class='font-mono-tabular'>" + d.code + "</code></td>" +
+                "<td><strong>" + d.name + "</strong></td>" +
+                "<td class='font-mono-tabular'>" + d.currency + "</td>" +
+                "<td style='text-align:center;'>" + pendingBadge + "</td>" +
+                "<td style='text-align:center;'>" + unpaidBadge + "</td>" +
+                "<td class='font-mono-tabular' style='text-align:right; font-weight:600;'>" + dueStr + "</td>" +
+                "<td style='text-align:center;'>" + anomBadge + "</td>" +
+                "<td>" + renderStatusBadgeHtml(d.status) + "</td>" +
+                "</tr>";
+            }).join("");
+          }
+        } else {
+          // Vue DOSSIER
+          if (!activeDossierId) {
+            emptyEl.textContent = "Aucun dossier client sélectionné. Veuillez sélectionner ou créer un dossier.";
+            emptyEl.classList.remove("hidden");
+            contentEl.classList.add("hidden");
+            return;
+          }
+          contentEl.classList.remove("hidden");
+
+          const period = (document.getElementById("dash-period-select") && document.getElementById("dash-period-select").value) || "FISCAL_YEAR";
+          const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/dashboard?period=" + encodeURIComponent(period));
+
+          // 6 KPI Décisionnels
+          const s = res.sales || {};
+          const p = res.purchases || {};
+          const q = res.quotes || {};
+          const a = res.anomalies || {};
+
+          const turnoverStr = ((s.turnoverNetMinor || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+          const vatStr = ((s.vatCollectedMinor || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+          const collStr = ((s.collectionsTotalMinor || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+          const remStr = ((s.remainingDueMinor || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+          const expStr = ((p.expensesNetMinor || 0) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+          document.getElementById("kpi-val-turnover").textContent = turnoverStr;
+          document.getElementById("kpi-sub-turnover").textContent = "TVA collectée : " + vatStr;
+
+          document.getElementById("kpi-val-collections").textContent = collStr;
+          document.getElementById("kpi-sub-collections").textContent = (s.invoicesCount || 0) + " facture(s) émise(s)";
+
+          document.getElementById("kpi-val-remaining").textContent = remStr;
+          document.getElementById("kpi-sub-remaining").textContent = (s.overdueInvoicesCount || 0) + " facture(s) échue(s) (" + (((s.overdueAmountMinor || 0) / 100).toFixed(2)) + " €)";
+
+          document.getElementById("kpi-val-expenses").textContent = expStr;
+          document.getElementById("kpi-sub-expenses").textContent = (p.documentsCount || 0) + " pièce(s) validée(s)";
+
+          document.getElementById("kpi-val-quotes").textContent = (q.quotesCount || 0) + " devis";
+          document.getElementById("kpi-sub-quotes").textContent = "Taux de conversion : " + (((q.conversionRateBps || 0) / 100).toFixed(0)) + " %";
+
+          document.getElementById("kpi-val-anomalies").textContent = (a.openCount || 0) + " alerte(s)";
+          document.getElementById("kpi-sub-anomalies").textContent = (a.criticalCount || 0) + " critique(s) bloquante(s)";
+
+          // Alertes prioritaires actionnables
+          const alerts = res.actionableAlerts || [];
+          const alertsBadge = document.getElementById("dash-alerts-count-badge");
+          alertsBadge.textContent = alerts.length + " action(s) requise(s)";
+          alertsBadge.className = "badge " + (alerts.length > 0 ? "badge-ai" : "badge-valid");
+
+          const alertsTbody = document.getElementById("dash-alerts-tbody");
+          if (alerts.length === 0) {
+            alertsTbody.innerHTML = "<tr><td colspan='6' style='text-align:center; padding:1.25rem; color:var(--cn-text-secondary);'>Aucune alerte prioritaire pour cette période. Situation comptable et documentaire sous contrôle.</td></tr>";
+          } else {
+            alertsTbody.innerHTML = alerts.map((al) => {
+              let prioBadge = "<span class='badge badge-info'>INFO</span>";
+              if (al.priority === "CRITICAL") {
+                prioBadge = "<span class='badge' style='background:var(--cn-state-error-bg); color:var(--cn-state-error-text); border:1px solid var(--cn-state-error-border);'>CRITIQUE</span>";
+              } else if (al.priority === "WARNING") {
+                prioBadge = "<span class='badge badge-ai'>ATTENTION</span>";
+              }
+              const amtStr = al.amountMinor !== undefined && al.amountMinor !== null
+                ? (al.amountMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"
+                : "—";
+              const due = al.dueDate ? al.dueDate.slice(0, 10) : "—";
+              return "<tr>" +
+                "<td>" + prioBadge + "</td>" +
+                "<td><strong>" + al.title + "</strong></td>" +
+                "<td style='font-size:0.85rem; color:var(--cn-text-secondary);'>" + al.description + "</td>" +
+                "<td class='font-mono-tabular' style='text-align:right; font-weight:600;'>" + amtStr + "</td>" +
+                "<td class='font-mono-tabular'>" + due + "</td>" +
+                "<td style='text-align:center;'><button type='button' class='btn-secondary dash-action-btn' data-tab='" + al.targetTab + "' data-entity-id='" + (al.entityId || "") + "' style='font-size:0.78rem; padding:4px 8px;'>" + al.actionLabel + "</button></td>" +
+                "</tr>";
+            }).join("");
+
+            alertsTbody.querySelectorAll(".dash-action-btn").forEach((btn) => {
+              btn.addEventListener("click", () => {
+                const targetTab = btn.getAttribute("data-tab");
+                const entityId = btn.getAttribute("data-entity-id");
+                switchTab(targetTab);
+                if (targetTab === "tab-documents" && entityId) {
+                  openDocumentDetail(entityId);
+                }
+              });
+            });
+          }
+
+          // Détection état vide d'activité
+          const isEmpty = (s.invoicesCount || 0) === 0 && (p.documentsCount || 0) === 0 && (q.quotesCount || 0) === 0 && ((res.accounting && res.accounting.totalEntriesCount) || 0) === 0;
+          if (isEmpty) {
+            emptyEl.textContent = "Dossier en attente d'activité comptable : aucune facture, pièce justificative ou écriture n'est enregistrée pour cette période.";
+            emptyEl.classList.remove("hidden");
+          }
+        }
+      } catch (err) {
+        if (err && err.message && (err.message.includes("403") || err.message.toLowerCase().includes("non autorisé") || err.message.toLowerCase().includes("permission"))) {
+          forbiddenEl.classList.remove("hidden");
+          contentEl.classList.add("hidden");
+        } else {
+          errorEl.textContent = "Erreur de chargement du tableau de bord : " + (err && err.message ? err.message : String(err));
+          errorEl.classList.remove("hidden");
+        }
+      } finally {
+        loadingEl.classList.add("hidden");
+      }
+    }
+
+    document.getElementById("btn-dash-view-dossier").addEventListener("click", () => setDashView("DOSSIER"));
+    document.getElementById("btn-dash-view-firm").addEventListener("click", () => setDashView("FIRM"));
+    document.getElementById("dash-period-select").addEventListener("change", () => loadDashboardData());
+    document.getElementById("btn-dash-refresh").addEventListener("click", () => loadDashboardData());
 
     function renderActiveDossierSelector() {
       const sel = document.getElementById("active-dossier-selector");

@@ -241,4 +241,61 @@
   - Le Lot 1.3 est finalisé et vérifié.
   - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.3 en attente de la revue et de l'autorisation de l'utilisateur avant d'engager le Lot 1.4 (Module 2 — Tableaux de bord et indicateurs de pilotage).
 
+---
+
+## ACT-0015 — 2026-10-18T21:50:00+01:00 — Implémentation du Lot 1.4 : Module 2 — Tableaux de Bord et Indicateurs de Pilotage (Vue Entreprise & Vue Cabinet, Données 100% Persistées, Filtres Période & Alertes Actionnables)
+- **Objectif** : Implémenter intégralement le Module 2 (Tableaux de Bord et Pilotage de Gestion) de la Phase 1 conformément au cahier des charges (§20), aux directives de pilotage, et aux retours complémentaires du Lot 1.3 (qualification Factur-X en "génération préliminaire", avoirs partiels sans annulation indue de facture, tests fonctionnels PostgreSQL 16 complets sur devis/factures/paiements/avoirs).
+- **Périmètre & Fichiers modifiés** :
+  1. `docs/PHASE1_DELIVERY_PLAN.md` :
+     - Qualification formelle Factur-X du Lot 1.3 en « génération XML préliminaire (non qualifiée pour un usage fiscal de production) ».
+     - Insertion d'une section dédiée : *« Périmètre Distinct — Réforme Française de la Facturation Électronique »* distinguant les 3 niveaux de maturité (Niveau 1 données comptables internes, Niveau 2 génération XML préliminaire Factur-X EN 16931, Niveau 3 connectivité PDP/PPF et e-reporting nécessitant un tiers opérateur agréé).
+     - Précision du périmètre du Lot 1.4 (indicateurs 100% calculés à partir de la base SQL, sans aucune donnée fictive ou simulée en production, arithmétique exacte en centimes, filtres temporels stricts, alertes prioritaires cliquables, vue entreprise vs vue cabinet, 5 états d'interface).
+  2. `src/services/invoicing-service.ts` :
+     - Enrichissement de `createCreditNoteForInvoice` pour supporter les avoirs partiels via le paramètre optionnel `partialGrossAmountMinor` : si partiel, la facture d'origine reste active (`FINALIZED` ou `PARTIALLY_PAID`, NON marquée `CANCELLED`) avec traçabilité de l'avoir dans `legal_mentions_json.partialCreditNotes` ; si total, la facture d'origine est marquée `CANCELLED`.
+     - Qualification explicite du XML Factur-X généré comme flux préliminaire non certifié.
+  3. `src/services/dashboard-service.ts` *(NOUVEAU)* :
+     - Résolution déterministe des filtres de période (`resolvePeriodDates`) : `ALL`, `FISCAL_YEAR`, `QUARTER`, `MONTH`, `CUSTOM`.
+     - Indicateurs dossier actif (`getDossierDashboardMetrics`) :
+       - Ventes : CA HT facturé (`turnoverNetMinor`), TVA collectée (`vatCollectedMinor`), total TTC (`turnoverGrossMinor`), factures émises, règlements encaissés (`paidAmountMinor`), créances restantes (`remainingDueMinor` avec déduction rigoureuse des avoirs partiels), factures échues (`overdueInvoicesCount`, `overdueAmountMinor`).
+       - Dépenses : Dépenses fournisseurs validées HT/TVA/TTC issues des factures reçues et des justificatifs validés (`SUPPLIER_INVOICE`, `RECEIPT_EXPENSE`), décompte par statut (`PENDING_REVIEW`, `VALIDATED`, `REJECTED`).
+       - Devis : Total devis, devis acceptés/convertis, taux de conversion exact en points de base (`conversionRateBps`).
+       - Synthèse comptable : Écritures brouillon/validées, total Débit/Crédit, contrôle d'équilibre.
+       - Anomalies : Décompte des erreurs bloquantes et suspicions ouvertes.
+       - Alertes prioritaires actionnables (`actionableAlerts`) : triées par criticité (`CRITICAL` -> `WARNING` -> `INFO`), avec étiquettes claires, montants, échéances, et URLs d'action directe vers les pièces sources.
+       - Mention de pilotage non certifié (`isCertifiedAudit: false`, disclaimer légal obligatoire).
+     - Indicateurs cabinet / portefeuille multi-dossiers (`getFirmDashboardMetrics`) :
+       - Consolidation de l'ensemble des dossiers autorisés : statut actif/archivé, pièces justificatives en attente de traitement, factures impayées, volume des créances en attente, anomalies non résolues.
+       - Rétrocompatibilité totale avec les compteurs globaux existants.
+  4. `src/server.ts` :
+     - Exposition sécurisée de `GET /api/organizations/:orgId/dashboard` (Vue Cabinet).
+     - Exposition sécurisée de `GET /api/organizations/:orgId/dossiers/:dossierId/dashboard` avec support des paramètres de requête `period`, `startDate`, `endDate`.
+     - Support du paramètre `partialGrossAmountMinor` sur `POST .../sales-invoices/:invId/credit-note`.
+  5. `src/ui/app-view.ts` :
+     - Mise en place complète du Module 2 dans `#tab-dashboard` : barre d'outils avec sélecteur de vue (Dossier vs Cabinet), sélecteur de période comptable, bouton d'actualisation.
+     - 6 cartes KPI décisionnelles avec montants monétaires formatés en centimes.
+     - Table des alertes et actions prioritaires avec boutons d'action menant directement à l'onglet et au document cible.
+     - Table du portefeuille multi-dossiers de la vue cabinet avec navigation directe par dossier.
+     - Gestion des 5 états d'interface : chargement (`cn-state-loading`), erreur (`cn-state-error`), permission insuffisante (`cn-state-forbidden`), liste vide (`cn-state-empty`), et contenu (`#dash-content-container`).
+     - Respect absolu de la charte graphique officielle et zéro couleur codée en dur hors `:root`.
+  6. `src/tests/phase1-lot1-4.test.ts` *(NOUVEAU)* :
+     - 11 sous-tests automatisés exhaustifs vérifiant la résolution des dates, les calculs de CA/TVA/règlements/reste dû, la prise en compte des avoirs totaux et partiels, l'isolation temporelle, les dépenses et flux OCR, la conversion des devis, les alertes prioritaires, l'état vide, la vue cabinet, l'étanchéité multi-tenant et l'intégration API REST HTTP.
+  7. `src/tests/phase1-readiness-and-postgres.test.ts` :
+     - Ajout de tests fonctionnels réels sur PostgreSQL 16 local couvrant la création de devis, lignes de devis, factures de vente, lignes de facture, règlements et avoir partiel.
+- **Sauvegarde & Intégrité** :
+  - Sauvegarde de la base de référence avant travaux : `data/backups/app.db.pre-lot-1.4.bak` (SHA-256 : `047bf2a5758b8569b2b45b05cb0c783bf5a5c1cd804d0ed156e0c0503e607f80`).
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **57/57 tests passants** (7 suites de tests, 0 échec, durée `1962.30 ms`).
+  - Validation complète sur les 7 suites :
+    1. Extension scope international (8/8 pass)
+    2. Phase 0 fondations & sécurité (9/9 pass)
+    3. Phase 1 Lot 1.1 layout/design/dossiers (4/4 pass)
+    4. Phase 1 Lot 1.2 collecte documentaire (8/8 pass)
+    5. Phase 1 Lot 1.3 Module 4 facturation/devis (12/12 pass)
+    6. Phase 1 Lot 1.4 Module 2 tableaux de bord & pilotage (11/11 pass)
+    7. Audit complémentaire Phase 0 & PostgreSQL 16 réel (5/5 pass, tests fonctionnels complets)
+- **Réserves / Prochaines étapes** :
+  - Le Lot 1.4 est finalisé, persistant et vérifié à 100%.
+  - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.4 en attente de la revue et de l'autorisation explicite de l'utilisateur avant d'engager le Lot 1.5.
+
 
