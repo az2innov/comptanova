@@ -70,6 +70,9 @@ export interface AppConfig {
   /** Pays par défaut */
   defaultCountryCode: string;
 
+  /** Confiance explicite envers l'en-tête X-Forwarded-For derrière un reverse proxy (SEC-OPEN-03) */
+  trustProxy: boolean;
+
   /** Charte graphique centralisée (REQ-002) */
   brandColors: {
     primaryDeepEmerald: string;
@@ -85,20 +88,29 @@ const defaultDevSecret = crypto
   .update("dev-only-secret-change-in-production")
   .digest("hex");
 
-function isInsecureOrMissingSecret(secret: string | undefined): boolean {
-  if (!secret) return true;
+function validateProductionSecret(name: string, secret: string | undefined): void {
+  if (!secret || secret.trim().length < 32) {
+    throw new Error(
+      `FATAL [SEC-OPEN-01] : La variable d'environnement ${name} est absente ou trop courte (< 32 caractères) en production.`
+    );
+  }
   const trimmed = secret.trim();
-  if (trimmed.length < 32) return true;
-  if (trimmed === defaultDevSecret) return true;
   const lower = trimmed.toLowerCase();
   if (
+    trimmed === defaultDevSecret ||
     lower.includes("remplacer") ||
     lower.includes("change-in-production") ||
     lower.includes("dev-only")
   ) {
-    return true;
+    throw new Error(
+      `FATAL [SEC-OPEN-01] : La variable d'environnement ${name} utilise une valeur de démonstration interdite en production.`
+    );
   }
-  return false;
+  if (new Set(trimmed).size < 10) {
+    throw new Error(
+      `FATAL [SEC-OPEN-01] : La variable d'environnement ${name} a une entropie insuffisante (< 10 caractères distincts) en production.`
+    );
+  }
 }
 
 export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -108,12 +120,11 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     | "production";
 
   if (nodeEnv === "production") {
-    if (
-      isInsecureOrMissingSecret(env.SESSION_SECRET) ||
-      isInsecureOrMissingSecret(env.SIGNED_URL_SECRET)
-    ) {
+    validateProductionSecret("SESSION_SECRET", env.SESSION_SECRET);
+    validateProductionSecret("SIGNED_URL_SECRET", env.SIGNED_URL_SECRET);
+    if (env.SESSION_SECRET!.trim() === env.SIGNED_URL_SECRET!.trim()) {
       throw new Error(
-        "FATAL [SEC-OPEN-01]: SESSION_SECRET et SIGNED_URL_SECRET doivent être explicitement définis avec au moins 32 caractères aléatoires lorsque NODE_ENV=production."
+        "FATAL [SEC-OPEN-01] : SESSION_SECRET et SIGNED_URL_SECRET doivent être strictement distincts en production."
       );
     }
   }
@@ -170,13 +181,14 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ),
 
     defaultCountryCode: env.DEFAULT_COUNTRY_CODE || "FR",
+    trustProxy: (env.TRUST_PROXY || "false").toLowerCase() === "true",
 
     brandColors: {
       primaryDeepEmerald: env.BRAND_COLOR_PRIMARY || "#153D35",
       secondaryJade: env.BRAND_COLOR_SECONDARY || "#237D68",
       accentWarmAmber: env.BRAND_COLOR_ACCENT || "#D9A441",
-      surfaceOffWhite: env.BRAND_COLOR_SURFACE || "#F6F8F7",
-      textGraphite: env.BRAND_COLOR_TEXT || "#111827",
+      surfaceOffWhite: env.BRAND_COLOR_SURFACE || "#F7F6F2",
+      textGraphite: env.BRAND_COLOR_TEXT || "#1C2421",
     },
   };
 }

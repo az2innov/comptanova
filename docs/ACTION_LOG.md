@@ -102,3 +102,41 @@
   - `npm test` $\rightarrow$ **22/22 tests réussis** en `1061.28 ms` (`TEST-CAMP-005`).
 - **Fichiers modifiés** : `src/config/app-config.ts`, `src/ui/app-view.ts`, `src/db/database.ts`, `src/db/phase1-readiness-migration.ts`, `src/server.ts`, `src/tests/phase1-readiness-and-postgres.test.ts` et les registres sous `docs/`.
 
+---
+
+### `ACT-0009` — Contre-audit final indépendant du Lot 0.5 sur le commit `dce1dd7`
+- **Date et heure** : 2026-10-18 15:49 – 16:00 (+01:00)
+- **Lot concerné** : `LOT-0.5-FINAL-REAUDIT`
+- **Objectif** : Vérifier indépendamment et sans modifier le code source (`src/`) les corrections annoncées dans le commit `dce1dd7` (`SEC-OPEN-01` à `SEC-OPEN-05` et `REQ-002`).
+- **Commandes exécutées** :
+  - `git status -s && git branch -vv && git show --stat dce1dd7`
+  - `npm run typecheck && npm test` (**22/22 tests passants** en `1088.95 ms`)
+  - Exécution d'un script Node.js non destructif inspectant `./data/app.db` (`sqlite_master` triggers) et testant les cas limites de `getAppConfig(env)` et `assertOrganizationAccess()`.
+- **Constats vérifiés** :
+  1. `SEC-OPEN-01` (`PARTIELLEMENT CORRIGÉ`) : Bloque les secrets absents, courts ($<32$) ou de démo, mais accepte `SESSION_SECRET === SIGNED_URL_SECRET` et `"a".repeat(32)`.
+  2. `SEC-OPEN-02` (`PARTIELLEMENT CORRIGÉ`) : RBAC API conforme (`200` `FIRM_ADMIN` et `PLATFORM_ADMIN` justifié, `403` inter-tenant et collaborateur), mais régression côté client dans `src/ui/app-view.ts` L798 où `refreshActiveOrganizationViews()` appelle `/audit-logs` sans `try/catch`, provoquant la déconnexion Web UI des rôles `ACCOUNTANT_COLLABORATOR` et `CLIENT_DIRECTOR`.
+  3. `SEC-OPEN-03` (`PARTIELLEMENT CORRIGÉ`) : Quota `429` sur `/api/auth/login` fonctionnel, mais indexé par IP seule (limite derrière reverse proxy sans `TRUST_PROXY`) et en mémoire locale.
+  4. `SEC-OPEN-04` (`PARTIELLEMENT CORRIGÉ`) : Triggers actifs sur base neuve (`:memory:` et PG16), mais absents de la base locale existante `./data/app.db` (`diskTriggers = []`) car ajoutés dans la migration `003` déjà appliquée au lieu d'une migration `004`.
+  5. `SEC-OPEN-05` & `REQ-002` (`PARTIELLEMENT CORRIGÉ`) : En-têtes `CSP` (`'unsafe-inline'`) et variables `:root` présents, mais quelques sélecteurs CSS de `app-view.ts` utilisent encore `#1e293b`/`#334155` en dur, et le serveur renvoie `400` uniformément sur les erreurs non-RBAC.
+- **Livrables** : Création de [`docs/PHASE0_FINAL_REAUDIT.md`](./PHASE0_FINAL_REAUDIT.md) et mise à jour de `SECURITY_REVIEW.md`, `PROJECT_STATUS.md` et `ACTION_LOG.md`. Aucune modification de `src/`.
+
+---
+
+### `ACT-0010` — Application et vérification du correctif ciblé Lot 0.6 (Clôture complète des 6 points du contre-audit)
+- **Date et heure** : 2026-10-18 16:02 – 16:20 (+01:00)
+- **Lot concerné** : `LOT-0.6-FINAL-REMEDIATION`
+- **Objectif** : Corriger tous les cas limites et régressions identifiés lors du contre-audit `ACT-0009` sur le commit `dce1dd7` afin d'amener `SEC-OPEN-01` à `SEC-OPEN-05` et `REQ-002` au statut `CORRIGÉ ET TESTÉ`.
+- **Modifications réalisées** :
+  1. `SEC-OPEN-01` ([`src/config/app-config.ts`](../src/config/app-config.ts)) : Validation individuelle de `SESSION_SECRET` et `SIGNED_URL_SECRET` en `NODE_ENV=production`, rejet des secrets à faible entropie (`new Set(trimmed).size < 10`) et rejet de `SESSION_SECRET === SIGNED_URL_SECRET`, sans divulguer la valeur du secret.
+  2. `SEC-OPEN-02` ([`src/server.ts`](../src/server.ts), [`src/ui/app-view.ts`](../src/ui/app-view.ts)) : Autorisation de `["FIRM_ADMIN", "CLIENT_DIRECTOR"]` sur `GET /api/organizations/:orgId/audit-logs` et ajout d'un `try/catch` autour de `/audit-logs` dans `refreshActiveOrganizationViews()`.
+  3. `SEC-OPEN-03` ([`src/server.ts`](../src/server.ts)) : Ajout de `resolveClientIp(req, trustProxy)` (ignore `X-Forwarded-For` par défaut sauf si `TRUST_PROXY=true`), purge systématique des compteurs expirés (`evictExpiredRateLimitBuckets`) et paramètre `rateLimitWindowMs` testable.
+  4. `SEC-OPEN-04` ([`src/db/database.ts`](../src/db/database.ts), [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts)) : Création de la migration **`004_audit_logs_immutability_triggers`** qui retire les clauses `ON DELETE SET NULL` sur `audit_logs` et installe les triggers sur la base existante `./data/app.db` ; ajout du test PL/pgSQL d'immuabilité sur PostgreSQL 16.15.
+  5. `SEC-OPEN-05` & `REQ-002` ([`src/server.ts`](../src/server.ts), [`src/ui/app-view.ts`](../src/ui/app-view.ts), [`src/config/app-config.ts`](../src/config/app-config.ts)) : Ajout de `Cache-Control: no-store` sur `GET /`, élargissement du filtre d'erreurs SQLite, distinction `404`/`400`, et remplacement intégral des couleurs ardoise/bleu héritées (`#1e293b`, `#334155`, `#60a5fa`, `#0f172a`) par les 5 couleurs officielles (`#153D35`, `#237D68`, `#D9A441`, `#F7F6F2`, `#1C2421`).
+- **Commandes exécutées** :
+  - `npm run typecheck` $\rightarrow$ `0 erreur`.
+  - `npm test` $\rightarrow$ **22/22 tests réussis** en `1506.65 ms` (`TEST-CAMP-006`).
+  - `npm run migrate` $\rightarrow$ `appliedVersions: ["004_audit_logs_immutability_triggers"], totalMigrations: 4`.
+  - `npm run seed` $\rightarrow$ `status: "OK", organizationsCount: 2, usersCount: 4`.
+  - Vérification sur `./data/app.db` $\rightarrow$ `triggers: ["trg_audit_logs_immutable_delete", "trg_audit_logs_immutable_update"]`, `updateBlocked: true`, `deleteBlocked: true`, `integrity.valid: true`.
+
+

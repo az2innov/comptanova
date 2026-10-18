@@ -48,8 +48,11 @@ export function resetRateLimitBucketsForTests(): void {
   rateLimitBuckets.clear();
 }
 
-function evictExpiredRateLimitBuckets(now: number): void {
-  if (rateLimitBuckets.size < 256) return;
+export function getRateLimitBucketCountForTests(): number {
+  return rateLimitBuckets.size;
+}
+
+export function evictExpiredRateLimitBuckets(now: number = Date.now()): void {
   for (const [key, bucket] of rateLimitBuckets.entries()) {
     if (now > bucket.resetAt) {
       rateLimitBuckets.delete(key);
@@ -57,16 +60,39 @@ function evictExpiredRateLimitBuckets(now: number): void {
   }
 }
 
-function checkRateLimit(key: string, maxRequestsPerMinute: number = 180): boolean {
+function checkRateLimit(
+  key: string,
+  maxRequestsPerWindow: number = 180,
+  windowMs: number = 60_000
+): boolean {
   const now = Date.now();
   evictExpiredRateLimitBuckets(now);
   const bucket = rateLimitBuckets.get(key);
   if (!bucket || now > bucket.resetAt) {
-    rateLimitBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
     return true;
   }
   bucket.count += 1;
-  return bucket.count <= maxRequestsPerMinute;
+  return bucket.count <= maxRequestsPerWindow;
+}
+
+export function resolveClientIp(
+  req: http.IncomingMessage,
+  trustProxy: boolean = appConfig.trustProxy
+): string {
+  const socketIp = req.socket?.remoteAddress || "127.0.0.1";
+  if (!trustProxy) {
+    return socketIp;
+  }
+  const xff = req.headers["x-forwarded-for"];
+  const rawXff = Array.isArray(xff) ? xff[0] : xff;
+  if (typeof rawXff === "string" && rawXff.trim().length > 0) {
+    const firstIp = rawXff.split(",")[0]?.trim();
+    if (firstIp && /^[0-9a-fA-F:.]{3,45}$/.test(firstIp)) {
+      return firstIp;
+    }
+  }
+  return socketIp;
 }
 
 async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
@@ -131,6 +157,8 @@ function extractBearerToken(req: http.IncomingMessage): string | null {
 export interface AppServerOptions {
   maxRequestsPerMinute?: number;
   maxLoginRequestsPerMinute?: number;
+  rateLimitWindowMs?: number;
+  trustProxy?: boolean;
 }
 
 export function createAppServer(
@@ -139,10 +167,12 @@ export function createAppServer(
 ): http.Server {
   const maxRequestsPerMinute = options.maxRequestsPerMinute ?? 180;
   const maxLoginRequestsPerMinute = options.maxLoginRequestsPerMinute ?? 10;
+  const rateLimitWindowMs = options.rateLimitWindowMs ?? 60_000;
+  const trustProxy = options.trustProxy ?? appConfig.trustProxy;
 
   return http.createServer(async (req, res) => {
-    const ip = req.socket.remoteAddress || "127.0.0.1";
-    if (!checkRateLimit(`global:${ip}`, maxRequestsPerMinute)) {
+    const ip = resolveClientIp(req, trustProxy);
+    if (!checkRateLimit(`global:${ip}`, maxRequestsPerMinute, rateLimitWindowMs)) {
       sendJson(res, 429, { error: "Trop de requêtes. Veuillez réessayer dans une minute." });
       return;
     }
@@ -165,6 +195,7 @@ export function createAppServer(
           "X-Frame-Options": "DENY",
           "Referrer-Policy": "strict-origin-when-cross-origin",
           "Content-Security-Policy": DEFAULT_CSP_HEADER,
+          "Cache-Control": "no-store",
         });
         res.end(html);
         return;
@@ -187,7 +218,7 @@ export function createAppServer(
 
       // 3. Authentification : Connexion (avec limitation de débit spécifique anti-brute-force)
       if (method === "POST" && pathname === "/api/auth/login") {
-        if (!checkRateLimit(`login:${ip}`, maxLoginRequestsPerMinute)) {
+        if (!checkRateLimit(`login:${ip}`, maxLoginRequestsPerMinute, rateLimitWindowMs)) {
           sendJson(res, 429, {
             error: "Trop de tentatives de connexion. Veuillez patienter une minute.",
           });
@@ -391,7 +422,7 @@ export function createAppServer(
           assertOrganizationAccess({
             session,
             organizationId: orgId,
-            allowedRoles: ["FIRM_ADMIN"],
+            allowedRoles: ["FIRM_ADMIN", "CLIENT_DIRECTOR"],
             platformAdminJustification,
             db,
           });
@@ -448,11 +479,17 @@ export function createAppServer(
       const rawMessage =
         err instanceof Error ? err.message : "Erreur interne du serveur.";
       const isInternalDbError =
-        /SQLITE_|syntax error|near "|constraint failed/i.test(rawMessage);
-      const safeMessage = isInternalDbError
-        ? "Requête invalide ou contrainte d'intégrité non respectée."
-        : rawMessage;
-      sendJson(res, 400, { error: safeMessage });
+        /SQLITE_|syntax error|near "|constraint failed|no such table|no such column|has no column|database is locked/i.test(
+          rawMessage
+        );
+      if (isInternalDbError) {
+        sendJson(res, 400, {
+          error: "Requête invalide ou contrainte d'intégrité non respectée.",
+        });
+        return;
+      }
+      const isNotFound = /introuvable/i.test(rawMessage);
+      sendJson(res, isNotFound ? 404 : 400, { error: rawMessage });
     }
   });
 }

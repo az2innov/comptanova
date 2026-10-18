@@ -32,6 +32,9 @@ import {
 import {
   createAppServer,
   resetRateLimitBucketsForTests,
+  getRateLimitBucketCountForTests,
+  evictExpiredRateLimitBuckets,
+  resolveClientIp,
 } from "../server.js";
 
 describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Multi-devises & PostgreSQL 16 réel)", () => {
@@ -116,14 +119,14 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     );
   });
 
-  it("3. Modèle de données Phase 1 France (Migration 003) : partie double multi-lignes, tiers, imports, banque, rapprochement et anomalies", () => {
+  it("3. Modèle de données Phase 1 France (Migrations 001 à 004) : partie double multi-lignes, tiers, imports, banque, rapprochement et anomalies", () => {
     const db = createDatabaseConnection(":memory:");
     resetSharedDatabaseForTests(db);
     runMigrations(db);
     seedDemoData(db);
 
     try {
-      // 3.1 Vérifier que les 3 migrations (001, 002, 003) sont appliquées
+      // 3.1 Vérifier que les 4 migrations (001, 002, 003, 004) sont appliquées
       const migrations = db
         .prepare(`SELECT version FROM schema_migrations ORDER BY version ASC`)
         .all() as Array<{ version: string }>;
@@ -133,6 +136,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
           "001_phase0_foundations",
           "002_international_scope_extension",
           "003_phase1_readiness_schema",
+          "004_audit_logs_immutability_triggers",
         ]
       );
 
@@ -270,8 +274,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     }
   });
 
-  it("4. Test réel sur PostgreSQL 16 local (psql -U postgres -h /tmp) : application du schéma complet (18 tables), contraintes d'intégrité et isolation transactionnelle", () => {
-    // Vérifie si le démon PostgreSQL local répond sur /tmp
+  it("4. Test réel sur PostgreSQL 16 local (psql -U postgres -h /tmp) : application du schéma complet (20 tables), contraintes d'intégrité et trigger d'inaltérabilité audit_logs", () => {
     const versionOutput = execFileSync(
       "psql",
       ["-U", "postgres", "-h", "/tmp", "-t", "-A", "-c", "SELECT version();"],
@@ -292,7 +295,6 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
 
       ${POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL}
 
-      -- Insertion d'une version de configuration pays et d'une organisation multi-tenant
       INSERT INTO country_config_versions (
         version_id, country_code, country_name, deployment_priority_order,
         version_number, effective_from, validation_status, is_production_enabled,
@@ -329,7 +331,6 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         1, 1, '2026-10-18T00:00:00Z', '2026-10-18T00:00:00Z'
       );
 
-      -- Insertion d'une écriture comptable équilibrée et de ses lignes sur PostgreSQL 16
       INSERT INTO accounting_entries (
         id, organization_id, dossier_id, journal_code, entry_date, piece_number,
         label, status, currency, currency_minor_unit_exponent,
@@ -349,12 +350,51 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         ('line-pg-2', 'org-pg-1', 'dossier-pg-1', 'entry-pg-1', 2, '706000', 'Prestation HT', 0, 100000, 'EUR', 2, '2026-10-18T00:00:00Z'),
         ('line-pg-3', 'org-pg-1', 'dossier-pg-1', 'entry-pg-1', 3, '445710', 'TVA collectée 20%', 0, 20000, 'EUR', 2, '2026-10-18T00:00:00Z');
 
-      -- Vérification du nombre de tables créées dans le schéma PostgreSQL
+      -- SEC-OPEN-04 sur PostgreSQL 16 : Insertion d'une ligne d'audit et test du trigger trg_pg_audit_logs_immutable
+      INSERT INTO audit_logs (
+        id, organization_id, dossier_id, actor_user_id, actor_role, action,
+        target_entity_type, target_entity_id, metadata_json, integrity_hash, created_at
+      ) VALUES (
+        'audit-pg-1', 'org-pg-1', 'dossier-pg-1', 'user-pg-1', 'FIRM_ADMIN', 'PG_AUDIT_TEST',
+        'ENTRY', 'entry-pg-1', '{}', 'sha256-test-hash', '2026-10-18T00:00:00Z'
+      );
+
+      DO $$
+      DECLARE
+        update_blocked BOOLEAN := FALSE;
+        delete_blocked BOOLEAN := FALSE;
+      BEGIN
+        BEGIN
+          UPDATE audit_logs SET action = 'TAMPERED' WHERE id = 'audit-pg-1';
+        EXCEPTION WHEN OTHERS THEN
+          IF SQLERRM LIKE '%SEC-OPEN-04%' THEN
+            update_blocked := TRUE;
+          END IF;
+        END;
+
+        BEGIN
+          DELETE FROM audit_logs WHERE id = 'audit-pg-1';
+        EXCEPTION WHEN OTHERS THEN
+          IF SQLERRM LIKE '%SEC-OPEN-04%' THEN
+            delete_blocked := TRUE;
+          END IF;
+        END;
+
+        IF NOT update_blocked OR NOT delete_blocked THEN
+          RAISE EXCEPTION 'Trigger trg_pg_audit_logs_immutable défaillant (update=%, delete=%)', update_blocked, delete_blocked;
+        END IF;
+      END;
+      $$;
+
+      -- Vérifie que la suppression d'un utilisateur ne provoque pas d'UPDATE implicite sur audit_logs et conserve l'ID historique
+      DELETE FROM accounting_entry_lines WHERE entry_id = 'entry-pg-1';
+      DELETE FROM accounting_entries WHERE id = 'entry-pg-1';
+      DELETE FROM users WHERE id = 'user-pg-1';
+
       SELECT COUNT(*) AS table_count
       FROM information_schema.tables
       WHERE table_schema = '${testSchema}';
 
-      -- Nettoyage du schéma de test
       DROP SCHEMA ${testSchema} CASCADE;
     `;
 
@@ -376,37 +416,71 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     );
   });
 
-  it("5. Remédiations post-audit de clôture (SEC-OPEN-01 à SEC-OPEN-05 & REQ-002) : secrets prod obligatoires, RBAC audit-logs, révocation/expiration session, rate-limit 429, triggers audit_logs et CSP/palette UI", async () => {
-    // 5.1 SEC-OPEN-01 : Refus de démarrage en production si SESSION_SECRET ou SIGNED_URL_SECRET est absent ou faible
+  it("5. Remédiations Lot 0.5 + Lot 0.6 (SEC-OPEN-01 à SEC-OPEN-05 & REQ-002) : entropie/unicité secrets prod, RBAC CLIENT_DIRECTOR & UI non-admin, trustProxy/expiration rate-limit, triggers sans conflit FK et palette UI intégrale", async () => {
+    // 5.1 SEC-OPEN-01 : Refus de démarrage en production pour chaque secret absent, trop court, de démo, identique ou de faible entropie
     assert.throws(
       () => getAppConfig({ NODE_ENV: "production" }),
-      /FATAL \[SEC-OPEN-01\]/
+      /FATAL \[SEC-OPEN-01\] : La variable d'environnement SESSION_SECRET/
     );
     assert.throws(
       () =>
         getAppConfig({
           NODE_ENV: "production",
-          SESSION_SECRET: "short-secret",
-          SIGNED_URL_SECRET: "another-short-secret",
+          SESSION_SECRET: "prod_session_secret_9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1",
         }),
-      /FATAL \[SEC-OPEN-01\]/
+      /FATAL \[SEC-OPEN-01\] : La variable d'environnement SIGNED_URL_SECRET/
     );
     assert.throws(
       () =>
         getAppConfig({
           NODE_ENV: "production",
-          SESSION_SECRET: "remplacer_par_une_chaine_aleatoire_de_64_caracteres_minimum",
-          SIGNED_URL_SECRET: "remplacer_par_une_autre_chaine_aleatoire_de_64_caracteres_minimum",
+          SIGNED_URL_SECRET: "prod_signed_url_secret_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e",
         }),
-      /FATAL \[SEC-OPEN-01\]/
+      /FATAL \[SEC-OPEN-01\] : La variable d'environnement SESSION_SECRET/
     );
+    assert.throws(
+      () =>
+        getAppConfig({
+          NODE_ENV: "production",
+          SESSION_SECRET: "a".repeat(48),
+          SIGNED_URL_SECRET: "prod_signed_url_secret_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e",
+        }),
+      /FATAL \[SEC-OPEN-01\] : La variable d'environnement SESSION_SECRET a une entropie insuffisante/
+    );
+    const sameSecret = "prod_shared_secret_9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1";
+    try {
+      getAppConfig({
+        NODE_ENV: "production",
+        SESSION_SECRET: sameSecret,
+        SIGNED_URL_SECRET: sameSecret,
+      });
+      assert.fail("Doit refuser SESSION_SECRET === SIGNED_URL_SECRET en production");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      assert.match(
+        msg,
+        /FATAL \[SEC-OPEN-01\] : SESSION_SECRET et SIGNED_URL_SECRET doivent être strictement distincts/
+      );
+      assert.equal(msg.includes(sameSecret), false, "Aucun secret ne doit être divulgué dans l'erreur");
+    }
+
     const prodCfg = getAppConfig({
       NODE_ENV: "production",
       SESSION_SECRET: "prod_session_secret_9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1",
       SIGNED_URL_SECRET: "prod_signed_url_secret_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e",
+      TRUST_PROXY: "true",
     });
     assert.equal(prodCfg.nodeEnv, "production");
+    assert.equal(prodCfg.trustProxy, true);
     assert.equal(prodCfg.brandColors.primaryDeepEmerald, "#153D35");
+
+    // 5.2 SEC-OPEN-03 : Vérification de resolveClientIp (anti-spoofing X-Forwarded-For par défaut)
+    const fakeReq = {
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "x-forwarded-for": "203.0.113.50, 10.0.0.1" },
+    } as unknown as Parameters<typeof resolveClientIp>[0];
+    assert.equal(resolveClientIp(fakeReq, false), "127.0.0.1");
+    assert.equal(resolveClientIp(fakeReq, true), "203.0.113.50");
 
     // Préparation base en mémoire
     const db = createDatabaseConnection(":memory:");
@@ -418,6 +492,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     const server = createAppServer(db, {
       maxRequestsPerMinute: 100,
       maxLoginRequestsPerMinute: 3,
+      rateLimitWindowMs: 350,
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const addr = server.address();
@@ -425,7 +500,7 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
     const baseUrl = `http://127.0.0.1:${addr.port}`;
 
     try {
-      // 5.2 SEC-OPEN-04 : Triggers d'inaltérabilité (append-only) sur audit_logs
+      // 5.3 SEC-OPEN-04 : Triggers d'inaltérabilité (append-only) sur audit_logs + préservation de l'ID historique en cas de suppression d'utilisateur
       assert.throws(() => {
         db.prepare(`UPDATE audit_logs SET action = 'TAMPERED'`).run();
       }, /Violation d'inaltérabilité \[SEC-OPEN-04\]/);
@@ -434,7 +509,22 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         db.prepare(`DELETE FROM audit_logs`).run();
       }, /Violation d'inaltérabilité \[SEC-OPEN-04\]/);
 
-      // 5.3 SEC-OPEN-03 (Sessions) : Révocation immédiate et expiration de session
+      // Insertion d'un utilisateur éphémère + log d'audit, puis suppression de l'utilisateur : ne doit PAS déclencher ON DELETE SET NULL sur audit_logs
+      db.prepare(
+        `INSERT INTO users (id, email, full_name, password_hash, is_platform_admin, is_active, created_at, updated_at)
+         VALUES ('usr-temp-del', 'temp@demo.local', 'Temp User', 'hash', 0, 1, datetime('now'), datetime('now'))`
+      ).run();
+      db.prepare(
+        `INSERT INTO audit_logs (id, organization_id, dossier_id, actor_user_id, actor_role, action, target_entity_type, metadata_json, integrity_hash, created_at)
+         VALUES ('audit-temp-del', NULL, NULL, 'usr-temp-del', 'ACCOUNTANT_COLLABORATOR', 'TEMP_ACTION', 'USER', '{}', 'hash-temp', datetime('now'))`
+      ).run();
+      db.prepare(`DELETE FROM users WHERE id = 'usr-temp-del'`).run();
+      const preservedAudit = db
+        .prepare(`SELECT actor_user_id FROM audit_logs WHERE id = 'audit-temp-del'`)
+        .get() as { actor_user_id: string };
+      assert.equal(preservedAudit.actor_user_id, "usr-temp-del");
+
+      // 5.4 SEC-OPEN-03 (Sessions) : Révocation immédiate et expiration de session
       const authCollab = authenticateUser(
         "collab@cabinet-hexagone-demo.local",
         "DemoAdmin2026!",
@@ -444,7 +534,6 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       );
       assert.ok(resolveSessionByToken(authCollab.rawToken, db));
 
-      // Expiration forcée dans le passé
       const expiredAuth = authenticateUser(
         "collab@cabinet-hexagone-demo.local",
         "DemoAdmin2026!",
@@ -457,7 +546,6 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       );
       assert.equal(resolveSessionByToken(expiredAuth.rawToken, db), null);
 
-      // Révocation explicite
       const toRevokeAuth = authenticateUser(
         "collab@cabinet-hexagone-demo.local",
         "DemoAdmin2026!",
@@ -468,10 +556,10 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
       revokeSession(toRevokeAuth.rawToken, db);
       assert.equal(resolveSessionByToken(toRevokeAuth.rawToken, db), null);
 
-      // 5.4 SEC-OPEN-02 : Seul FIRM_ADMIN (ou PLATFORM_ADMIN justifié) peut lire /api/organizations/:orgId/audit-logs
-      const orgId = authCollab.context.memberships[0]!.organizationId;
+      // 5.5 SEC-OPEN-02 : Matrice complète sur GET /api/organizations/:orgId/audit-logs (FIRM_ADMIN, CLIENT_DIRECTOR, ACCOUNTANT_COLLABORATOR, PLATFORM_ADMIN)
+      const orgAId = authCollab.context.memberships[0]!.organizationId;
       const collabAuditRes = await fetch(
-        `${baseUrl}/api/organizations/${orgId}/audit-logs`,
+        `${baseUrl}/api/organizations/${orgAId}/audit-logs`,
         {
           headers: { Authorization: `Bearer ${authCollab.rawToken}` },
         }
@@ -486,25 +574,90 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         db
       );
       const adminAuditRes = await fetch(
-        `${baseUrl}/api/organizations/${orgId}/audit-logs`,
+        `${baseUrl}/api/organizations/${orgAId}/audit-logs`,
         {
           headers: { Authorization: `Bearer ${authFirmAdmin.rawToken}` },
         }
       );
       assert.equal(adminAuditRes.status, 200);
 
-      // 5.5 SEC-OPEN-05 & REQ-002 : En-têtes CSP et palette de couleurs officielle (#153D35, #237D68, #D9A441)
+      const authClientDirector = authenticateUser(
+        "direction@atelier-lumiere-demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      const orgBId = authClientDirector.context.memberships[0]!.organizationId;
+      // CLIENT_DIRECTOR sur sa propre organisation (Tenant B) -> 200
+      const directorOwnOrgAuditRes = await fetch(
+        `${baseUrl}/api/organizations/${orgBId}/audit-logs`,
+        {
+          headers: { Authorization: `Bearer ${authClientDirector.rawToken}` },
+        }
+      );
+      assert.equal(directorOwnOrgAuditRes.status, 200);
+
+      // CLIENT_DIRECTOR sur l'organisation d'un autre tenant (Tenant A) -> 403
+      const directorCrossOrgAuditRes = await fetch(
+        `${baseUrl}/api/organizations/${orgAId}/audit-logs`,
+        {
+          headers: { Authorization: `Bearer ${authClientDirector.rawToken}` },
+        }
+      );
+      assert.equal(directorCrossOrgAuditRes.status, 403);
+
+      // PLATFORM_ADMIN sans justification -> 403, avec justification -> 200
+      const authPlatformAdmin = authenticateUser(
+        "superadmin@demo.local",
+        "DemoAdmin2026!",
+        "127.0.0.1",
+        "node-test",
+        db
+      );
+      const superNoJustifRes = await fetch(
+        `${baseUrl}/api/organizations/${orgAId}/audit-logs`,
+        {
+          headers: { Authorization: `Bearer ${authPlatformAdmin.rawToken}` },
+        }
+      );
+      assert.equal(superNoJustifRes.status, 403);
+
+      const superJustifiedRes = await fetch(
+        `${baseUrl}/api/organizations/${orgAId}/audit-logs`,
+        {
+          headers: {
+            Authorization: `Bearer ${authPlatformAdmin.rawToken}`,
+            "X-Platform-Admin-Justification": "Vérification support ticket #901 sur la chaîne d'audit",
+          },
+        }
+      );
+      assert.equal(superJustifiedRes.status, 200);
+
+      // 5.6 SEC-OPEN-05 & REQ-002 : En-têtes HTTP (HTML, JSON, 404) et palette de couleurs officielle intégrale sans couleurs héritées
       const htmlRes = await fetch(`${baseUrl}/`);
       assert.equal(htmlRes.status, 200);
       assert.ok(htmlRes.headers.get("content-security-policy")?.includes("default-src 'self'"));
       assert.equal(htmlRes.headers.get("x-frame-options"), "DENY");
       assert.equal(htmlRes.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(htmlRes.headers.get("cache-control"), "no-store");
       const htmlText = await htmlRes.text();
-      assert.ok(htmlText.includes("#153D35"), "La couleur primaire #153D35 doit être injectée dans l'UI");
-      assert.ok(htmlText.includes("#237D68"), "La couleur secondaire #237D68 doit être injectée dans l'UI");
-      assert.ok(htmlText.includes("#D9A441"), "La couleur d'accent #D9A441 doit être injectée dans l'UI");
+      assert.ok(htmlText.includes("#153D35"), "Primaire #153D35 requis");
+      assert.ok(htmlText.includes("#237D68"), "Secondaire #237D68 requis");
+      assert.ok(htmlText.includes("#D9A441"), "Accent #D9A441 requis");
+      assert.ok(htmlText.includes("#F7F6F2"), "Fond #F7F6F2 requis");
+      assert.ok(htmlText.includes("#1C2421"), "Texte #1C2421 requis");
+      assert.equal(
+        /#1e293b|#334155|#60a5fa|#0f172a/i.test(htmlText),
+        false,
+        "Aucune couleur slate/blue héritée ne doit subsister dans l'UI"
+      );
+      assert.ok(
+        htmlText.includes("Accès restreint RBAC [SEC-OPEN-02]"),
+        "L'UI doit gérer gracieusement le 403 sur /audit-logs pour les rôles non-admin"
+      );
 
-      // 5.6 SEC-OPEN-03 (Rate Limit) : Limitation anti-brute-force sur POST /api/auth/login (max 3/min configuré pour ce serveur de test)
+      // 5.7 SEC-OPEN-03 (Rate Limit & Expiration de fenêtre) : 3 requêtes 200 -> 4e requête 429 -> attente expiration (60 ms) -> retour 200
       for (let i = 0; i < 3; i++) {
         const res = await fetch(`${baseUrl}/api/auth/login`, {
           method: "POST",
@@ -525,6 +678,21 @@ describe("Audit Complémentaire Phase 0 & Préparation Phase 1 (Schéma, IA, Mul
         }),
       });
       assert.equal(rateLimitedRes.status, 429);
+
+      // Attente de l'expiration de la fenêtre de 350 ms
+      await new Promise((resolve) => setTimeout(resolve, 380));
+      evictExpiredRateLimitBuckets(Date.now());
+      assert.equal(getRateLimitBucketCountForTests(), 0, "Les compteurs expirés doivent être purgés");
+
+      const afterExpiryRes = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "expert@cabinet-hexagone-demo.local",
+          password: "DemoAdmin2026!",
+        }),
+      });
+      assert.equal(afterExpiryRes.status, 200);
     } finally {
       resetRateLimitBucketsForTests();
       await new Promise<void>((resolve) => server.close(() => resolve()));

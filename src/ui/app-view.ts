@@ -38,10 +38,11 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       --bg-surface: #ffffff;
       --bg-sidebar: ${appConfig.brandColors.primaryDeepEmerald};
       --text-main: ${appConfig.brandColors.textGraphite};
-      --text-muted: #475569;
-      --border-color: #e2e8f0;
+      --text-muted: #4b5563;
+      --border-color: #d1d5db;
       --primary: ${appConfig.brandColors.primaryDeepEmerald};
       --primary-hover: ${appConfig.brandColors.secondaryJade};
+      --accent-amber: ${appConfig.brandColors.accentWarmAmber};
       --ai-badge-bg: #fef3c7;
       --ai-badge-text: #92400e;
       --ai-badge-border: ${appConfig.brandColors.accentWarmAmber};
@@ -61,7 +62,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     }
     .regulatory-banner {
       background: ${appConfig.brandColors.primaryDeepEmerald};
-      color: #f8fafc;
+      color: var(--bg-app);
       font-size: 0.82rem;
       padding: 0.55rem 1.25rem;
       display: flex;
@@ -80,7 +81,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     }
     .sidebar {
       background: var(--bg-sidebar);
-      color: #f8fafc;
+      color: var(--bg-app);
       padding: 1.25rem;
       display: flex;
       flex-direction: column;
@@ -95,14 +96,14 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     }
     .brand-sub {
       font-size: 0.78rem;
-      color: #94a3b8;
+      color: #d1fae5;
       margin-top: 0.25rem;
     }
     .nav-btn {
       width: 100%;
       text-align: start;
       background: transparent;
-      color: #cbd5e1;
+      color: #ecfdf5;
       border: 1px solid transparent;
       padding: 0.65rem 0.85rem;
       border-radius: 6px;
@@ -112,13 +113,14 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       transition: all 0.15s;
     }
     .nav-btn:hover, .nav-btn:focus-visible {
-      background: #1e293b;
+      background: var(--primary-hover);
       color: #ffffff;
-      outline: 2px solid #60a5fa;
+      outline: 2px solid var(--accent-amber);
     }
     .nav-btn.active {
-      background: var(--primary);
+      background: var(--primary-hover);
       color: #ffffff;
+      border-color: var(--accent-amber);
     }
     .main-area {
       padding: 1.5rem 2rem;
@@ -131,7 +133,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       border-radius: 8px;
       padding: 1.25rem;
       margin-bottom: 1.25rem;
-      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 1px 2px rgba(28, 36, 33, 0.05);
     }
     .card h2, .card h3 {
       margin-top: 0;
@@ -178,9 +180,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       border-color: var(--valid-badge-border);
     }
     .badge-draft {
-      background: #e2e8f0;
-      color: #334155;
-      border-color: #94a3b8;
+      background: #e5e7eb;
+      color: var(--text-main);
+      border-color: #9ca3af;
     }
     .badge-danger {
       background: var(--danger-bg);
@@ -198,12 +200,12 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       font-size: 0.82rem;
       font-weight: 600;
       margin-bottom: 0.25rem;
-      color: #334155;
+      color: var(--text-main);
     }
     input, select {
       width: 100%;
       padding: 0.55rem 0.7rem;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--border-color);
       border-radius: 6px;
       font-size: 0.9rem;
     }
@@ -218,9 +220,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     }
     button.btn-primary:hover { background: var(--primary-hover); }
     button.btn-secondary {
-      background: #e2e8f0;
-      color: #0f172a;
-      border: 1px solid #cbd5e1;
+      background: #e5e7eb;
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
       padding: 0.5rem 0.9rem;
       border-radius: 6px;
       font-weight: 500;
@@ -237,9 +239,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       border-bottom: 1px solid var(--border-color);
     }
     th {
-      background: #f8fafc;
+      background: var(--bg-app);
       font-weight: 600;
-      color: #334155;
+      color: var(--text-main);
     }
     .alert-box {
       padding: 0.8rem 1rem;
@@ -253,9 +255,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       border: 1px solid #f87171;
     }
     .alert-info {
-      background: #eff6ff;
-      color: #1e3a8a;
-      border: 1px solid #93c5fd;
+      background: #ecfdf5;
+      color: var(--primary);
+      border: 1px solid var(--primary-hover);
     }
     .hidden { display: none !important; }
     .topbar {
@@ -322,8 +324,8 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       </div>
 
       <div>
-        <label id="i18n-lang-label" for="lang-selector" style="color:#94a3b8;">${dict.languageSelectorLabel}</label>
-        <select id="lang-selector" style="background:#1e293b; color:#fff; border-color:#334155;">
+        <label id="i18n-lang-label" for="lang-selector" style="color:#d1fae5;">${dict.languageSelectorLabel}</label>
+        <select id="lang-selector" style="background:var(--primary-hover); color:#fff; border-color:var(--accent-amber);">
           <option value="fr" ${localeDesc.languageCode === "fr" ? "selected" : ""}>Français (LTR)</option>
           <option value="en" ${localeDesc.languageCode === "en" ? "selected" : ""}>English (LTR)</option>
           <option value="ar" ${localeDesc.languageCode === "ar" ? "selected" : ""}>العربية (RTL)</option>
@@ -331,8 +333,8 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       </div>
 
       <div>
-        <label id="i18n-org-label" for="org-selector" style="color:#94a3b8;">${dict.activeOrganizationLabel}</label>
-        <select id="org-selector" style="background:#1e293b; color:#fff; border-color:#334155;"></select>
+        <label id="i18n-org-label" for="org-selector" style="color:#d1fae5;">${dict.activeOrganizationLabel}</label>
+        <select id="org-selector" style="background:var(--primary-hover); color:#fff; border-color:var(--accent-amber);"></select>
       </div>
 
       <nav style="display:flex; flex-direction:column; gap:0.35rem; flex:1;">
@@ -344,9 +346,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         <button id="i18n-nav-settings" type="button" class="nav-btn" data-tab="tab-settings">${dict.navSettingsAudit}</button>
       </nav>
 
-      <div style="border-top:1px solid #334155; padding-top:0.85rem; font-size:0.8rem;">
+      <div style="border-top:1px solid var(--primary-hover); padding-top:0.85rem; font-size:0.8rem;">
         <div id="current-user-name" style="font-weight:600;"></div>
-        <div id="current-user-role" style="color:#94a3b8; margin-bottom:0.6rem;"></div>
+        <div id="current-user-role" style="color:#d1fae5; margin-bottom:0.6rem;"></div>
         <button type="button" id="logout-btn" class="btn-secondary" style="width:100%;">${dict.logoutButton}</button>
       </div>
     </aside>
@@ -795,19 +797,26 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         "<tr><td>" + m.fullName + "</td><td>" + m.email + "</td><td><span class='badge badge-draft'>" + m.role + "</span></td><td>" + m.joinedAt.slice(0, 10) + "</td></tr>"
       ).join("");
 
-      const auditRes = await apiFetch("/api/organizations/" + activeOrgId + "/audit-logs", {
-        headers: justificationHeader
-      });
-      document.getElementById("settings-summary").innerHTML =
-        "<p><strong>Vérification d'intégrité de la chaîne d'audit :</strong> " +
-        (auditRes.chainIntegrity.valid
-          ? "<span class='badge badge-valid'>INTÈGRE (" + auditRes.chainIntegrity.checkedCount + " blocs SHA-256 vérifiés)</span>"
-          : "<span class='badge badge-danger'>RUPTURE DÉTECTÉE</span>") +
-        "</p>";
+      try {
+        const auditRes = await apiFetch("/api/organizations/" + activeOrgId + "/audit-logs", {
+          headers: justificationHeader
+        });
+        document.getElementById("settings-summary").innerHTML =
+          "<p><strong>Vérification d'intégrité de la chaîne d'audit :</strong> " +
+          (auditRes.chainIntegrity.valid
+            ? "<span class='badge badge-valid'>INTÈGRE (" + auditRes.chainIntegrity.checkedCount + " blocs SHA-256 vérifiés)</span>"
+            : "<span class='badge badge-danger'>RUPTURE DÉTECTÉE</span>") +
+          "</p>";
 
-      document.getElementById("audit-tbody").innerHTML = (auditRes.logs || []).map((l) =>
-        "<tr><td>" + l.createdAt.replace("T", " ").slice(0, 19) + "</td><td>" + l.actorRole + "</td><td><code>" + l.action + "</code></td><td>" + l.targetEntityType + "</td><td><code>" + l.integrityHash.slice(0, 16) + "...</code></td></tr>"
-      ).join("");
+        document.getElementById("audit-tbody").innerHTML = (auditRes.logs || []).map((l) =>
+          "<tr><td>" + l.createdAt.replace("T", " ").slice(0, 19) + "</td><td>" + l.actorRole + "</td><td><code>" + l.action + "</code></td><td>" + l.targetEntityType + "</td><td><code>" + l.integrityHash.slice(0, 16) + "...</code></td></tr>"
+        ).join("");
+      } catch (err) {
+        document.getElementById("settings-summary").innerHTML =
+          "<p><span class='badge badge-ai'>Accès restreint RBAC [SEC-OPEN-02]</span> La consultation du journal d'audit complet de l'organisation est réservée aux rôles d'administration (<code>FIRM_ADMIN</code>, <code>CLIENT_DIRECTOR</code> ou <code>PLATFORM_ADMIN</code> justifié).</p>";
+        document.getElementById("audit-tbody").innerHTML =
+          "<tr><td colspan='5' style='color:var(--text-muted);'>Journal d'audit non accessible pour le rôle courant (" + (err && err.message ? err.message : "403") + ").</td></tr>";
+      }
     }
 
     function renderDossiersTable(list) {

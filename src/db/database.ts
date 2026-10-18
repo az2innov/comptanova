@@ -497,18 +497,58 @@ export const MIGRATIONS: MigrationDefinition[] = [
   {
     version: "003_phase1_readiness_schema",
     description:
-      "Préparation complète du modèle de données pour la Phase 1 France et internationale : third_parties, chart_of_accounts, accounting_journals, accounting_entry_lines (partie double multi-lignes), import_batches, bank_transactions, reconciliation_links, anomalies et triggers d'inaltérabilité sur audit_logs.",
+      "Préparation complète du modèle de données pour la Phase 1 France et internationale : third_parties, chart_of_accounts, accounting_journals, accounting_entry_lines (partie double multi-lignes), import_batches, bank_transactions, reconciliation_links et anomalies.",
     upSql: `
       ${MIGRATION_003_PHASE1_READINESS_SQL}
+    `,
+  },
+  {
+    version: "004_audit_logs_immutability_triggers",
+    description:
+      "SEC-OPEN-04 : Suppression des cascades ON DELETE SET NULL sur audit_logs (conservation des identifiants historiques) et installation des triggers d'inaltérabilité (append-only) sur les bases neuves et existantes.",
+    upSql: `
+      DROP TRIGGER IF EXISTS trg_audit_logs_immutable_update;
+      DROP TRIGGER IF EXISTS trg_audit_logs_immutable_delete;
 
-      -- SEC-OPEN-04 : Triggers SQLite garantissant l'inaltérabilité (append-only) de audit_logs
-      CREATE TRIGGER IF NOT EXISTS trg_audit_logs_immutable_update
+      CREATE TABLE audit_logs_new (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT,
+        dossier_id TEXT,
+        actor_user_id TEXT,
+        actor_role TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_entity_type TEXT NOT NULL,
+        target_entity_id TEXT,
+        justification TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        ip_address TEXT,
+        previous_hash TEXT,
+        integrity_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      INSERT INTO audit_logs_new (
+        id, organization_id, dossier_id, actor_user_id, actor_role, action,
+        target_entity_type, target_entity_id, justification, metadata_json,
+        ip_address, previous_hash, integrity_hash, created_at
+      )
+      SELECT
+        id, organization_id, dossier_id, actor_user_id, actor_role, action,
+        target_entity_type, target_entity_id, justification, metadata_json,
+        ip_address, previous_hash, integrity_hash, created_at
+      FROM audit_logs;
+
+      DROP TABLE audit_logs;
+      ALTER TABLE audit_logs_new RENAME TO audit_logs;
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_org ON audit_logs(organization_id, created_at);
+
+      CREATE TRIGGER trg_audit_logs_immutable_update
       BEFORE UPDATE ON audit_logs
       BEGIN
         SELECT RAISE(ABORT, 'Violation d''inaltérabilité [SEC-OPEN-04] : modification interdite sur audit_logs.');
       END;
 
-      CREATE TRIGGER IF NOT EXISTS trg_audit_logs_immutable_delete
+      CREATE TRIGGER trg_audit_logs_immutable_delete
       BEFORE DELETE ON audit_logs
       BEGIN
         SELECT RAISE(ABORT, 'Violation d''inaltérabilité [SEC-OPEN-04] : suppression interdite sur audit_logs.');

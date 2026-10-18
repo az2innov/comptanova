@@ -4,6 +4,23 @@ Toutes les modifications et vérifications notables apportées au dépôt sont c
 
 ---
 
+## [Lot 0.6 — Correctif Ciblé Post-Contre-Audit : Migration 004 Triggers Audit, Entropie/Unicité Secrets, RBAC Client Director & UI, TrustProxy et Charte Intégrale] — 2026-10-18
+
+- **Identifiant du lot** : `LOT-0.6-FINAL-REMEDIATION`
+- **Objectif** : Résoudre l'intégralité des réserves techniques identifiées lors du contre-audit indépendant du commit `dce1dd7` ([`docs/PHASE0_FINAL_REAUDIT.md`](./PHASE0_FINAL_REAUDIT.md)) et amener les 6 contrôles (`SEC-OPEN-01` à `SEC-OPEN-05` et `REQ-002`) au statut `CORRIGÉ ET TESTÉ`.
+- **Modifications principales** :
+  - `SEC-OPEN-01` : Rejet en production des secrets à faible entropie (`< 10` caractères distincts) et de `SESSION_SECRET === SIGNED_URL_SECRET`, sans fuite du secret ([`src/config/app-config.ts`](../src/config/app-config.ts)).
+  - `SEC-OPEN-02` : Autorisation de `["FIRM_ADMIN", "CLIENT_DIRECTOR"]` sur `GET /api/organizations/:orgId/audit-logs` de leur propre organisation et ajout d'un `try/catch` dans `refreshActiveOrganizationViews()` ([`src/server.ts`](../src/server.ts), [`src/ui/app-view.ts`](../src/ui/app-view.ts)).
+  - `SEC-OPEN-03` : Ajout de `resolveClientIp(req, trustProxy)`, purge déterministe des compteurs expirés et test automatisé d'expiration de fenêtre de rate-limiting ([`src/server.ts`](../src/server.ts)).
+  - `SEC-OPEN-04` : Ajout de la migration **`004_audit_logs_immutability_triggers`** supprimant `ON DELETE SET NULL` sur `audit_logs` et installant les triggers `BEFORE UPDATE/DELETE` sur `./data/app.db` ainsi que le test PL/pgSQL sur PostgreSQL 16.15 ([`src/db/database.ts`](../src/db/database.ts), [`src/db/phase1-readiness-migration.ts`](../src/db/phase1-readiness-migration.ts)).
+  - `SEC-OPEN-05` & `REQ-002` : En-tête `Cache-Control: no-store` sur `GET /`, masquage élargi des erreurs SQLite, distinction `404`/`400`, et remplacement de toutes les couleurs ardoise/bleu héritées par les 5 couleurs officielles (`#153D35`, `#237D68`, `#D9A441`, `#F7F6F2`, `#1C2421`).
+- **Migrations appliquées** : `004_audit_logs_immutability_triggers` (`totalMigrations: 4`).
+- **Tests exécutés & résultats** :
+  - `npm run typecheck` $\rightarrow$ `0 erreur`.
+  - `npm test` $\rightarrow$ **22/22 tests réussis** en `1506.65 ms` (`TEST-CAMP-006`).
+
+---
+
 ## [Lot 0.5 — Remédiation Post-Audit Indépendant : Sécurité Production, RBAC Audit-Logs, Rate-Limit Login, Triggers Audit & Charte UI] — 2026-10-18
 
 - **Identifiant du lot** : `LOT-0.5-SECURITY-AND-UI-REMEDIATION`

@@ -402,9 +402,9 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
-    organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
-    dossier_id TEXT REFERENCES client_dossiers(id) ON DELETE SET NULL,
-    actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    organization_id TEXT,
+    dossier_id TEXT,
+    actor_user_id TEXT,
     actor_role TEXT NOT NULL,
     action TEXT NOT NULL,
     target_entity_type TEXT NOT NULL,
