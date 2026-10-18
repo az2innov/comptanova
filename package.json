@@ -1,0 +1,23 @@
+{
+  "name": "comptanova-saas-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Socle multi-tenant, sécurisé et multi-pays pour SaaS d'assistance comptable intelligent",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "migrate": "node --enable-source-maps dist/db/migrate-cli.js",
+    "seed": "node --enable-source-maps dist/db/seed-cli.js",
+    "start": "node --enable-source-maps dist/server.js",
+    "dev": "npm run build && npm run migrate && npm run seed && npm run start",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}
