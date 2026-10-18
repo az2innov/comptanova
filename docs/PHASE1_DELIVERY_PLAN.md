@@ -302,15 +302,15 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
 7. **Contrôles de sécurité** :
    - Vérification des permissions par dossier (`UPLOAD` pour importer la banque, `VALIDATE_ACCOUNTING` pour confirmer un rapprochement ou clore une anomalie), transactions SQL atomiques et audit complet.
 8. **Tests automatisés** :
-   - Suite `src/tests/phase1-lot5-bank-and-anomalies.test.ts` : import bancaire CSV et OFX, détection des opérations bancaires dupliquées, suggestion automatique de rapprochement, paiement partiel (2 virements de 600 € pour une facture de 1 200 € $\rightarrow$ `PARTIALLY_PAID` puis `PAID`), rejet de proposition, marquage sans justificatif, exécution du scan des 10 règles d'anomalies et résolution motivée d'une anomalie.
+   - Suite `src/tests/phase1-lot1-6.test.ts` (11 sous-tests) : import bancaire CSV et OFX, détection des opérations bancaires dupliquées (SHA-256 batch & hash transaction), suggestions déterministes de rapprochement avec score, non-création d'écriture comptable automatique, rapprochements partiels successifs, marquage frais/sans justificatif, exécution du scan des 10 règles déterministes d'anomalies, résolution avec justification obligatoire ($\ge 10$ car.), isolation multi-tenant et PostgreSQL 16 local réel.
 9. **Tests UX/UI** :
-   - Interfaces `Banque et rapprochements` et `Contrôles et anomalies` vérifiées sur ordinateur et mobile.
+   - Interfaces `Banque et rapprochements` (#tab-banking) et `Contrôles et anomalies` (#tab-anomalies) vérifiées avec 0 couleur hexadécimale codée en dur hors `:root`.
 10. **Critères d'acceptation** :
-    - Les Modules 5 et 6 passent au statut **`TERMINÉ ET TESTÉ`**.
+    - Les Modules 5 et 6 passent au statut **`TERMINÉ ET TESTÉ`** (80/80 tests passants sur la suite globale).
 11. **Risques et limitations** :
     - L'agrégation bancaire temps réel DSP2 (Bridge / Powens) n'est pas incluse dans le MVP Phase 1 (import par fichiers CSV/OFX).
-12. **Conditions de passage au Lot 1.6** :
-    - `npm run typecheck && npm test` à 100 %.
+12. **Conditions de passage au Lot 1.7** :
+    - Arrêt impératif et attente de l'autorisation expresse de l'utilisateur avant le démarrage du Lot 1.7.
 
 ---
 
@@ -364,7 +364,7 @@ Chaque lot ci-dessous est conçu comme une tranche verticale complète (Base de 
 | **Lot 1.1** | Design System officiel §5, Layout 10 entrées §8 & **Module 1 (Gestion complète des dossiers clients §9)** | `phase1-lot1-1.test.ts` (4 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`4bd790c`) |
 | **Lot 1.2** | **Module 3 (Collecte documentaire, validation fichiers, stockage privé, OCR & 6 statuts §14)** | `phase1-lot1-2.test.ts` (8 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`ef6625d` / `bf9e397`) |
 | **Lot 1.3** | **Module 4 (Facturation des ventes, Devis, Transformation, Règlements, Factur-X préliminaire §12)** | `phase1-lot1-3.test.ts` (12 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`cc4dcb3`) |
-| **Lot 1.4** | **Module 2 (Tableaux de bord et indicateurs de pilotage, Données 100% persistées, Filtres période & Liens §20)** | `phase1-lot1-4.test.ts` (8 sous-tests) | **EN COURS D'EXÉCUTION** |
-| **Lot 1.5** | **Module 5 (Saisie comptable multi-lignes en partie double, PCG/Journaux, Modèles, Validation & Extourne §16)** | `phase1-lot1-5.test.ts` | Planifié après Lot 1.4 |
-| **Lot 1.6** | **Module 6 (Import CSV/OFX & Rapprochement bancaire §17)** + **Module 7 (10 Règles de Contrôles & Anomalies §18)** | `phase1-lot1-6.test.ts` | Planifié après Lot 1.5 |
-| **Lot 1.7** | **Module 8 (Simulations indicatives §19)** + **Module 9 (Exports CSV/FEC §21)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot1-7.test.ts` | Clôture Phase 1 |
+| **Lot 1.4** | **Module 2 (Tableaux de bord et indicateurs de pilotage, Données 100% persistées, Filtres période & Liens §20)** | `phase1-lot1-4.test.ts` (11 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`f65fae8`) |
+| **Lot 1.5** | **Module 5 (Saisie comptable multi-lignes en partie double, PCG/Journaux, Modèles, Validation & Extourne §16)** | `phase1-lot1-5.test.ts` (12 sous-tests) | **TERMINÉ ET VÉRIFIÉ** (`0b67ae4` / `9aa0581`) |
+| **Lot 1.6** | **Module 6 (Import CSV/OFX & Rapprochement bancaire §17)** + **Module 7 (10 Règles de Contrôles & Anomalies §18)** | `phase1-lot1-6.test.ts` (11 sous-tests) | **TERMINÉ ET TESTÉ** (Commit Lot 1.6) |
+| **Lot 1.7** | **Module 8 (Simulations indicatives §19)** + **Module 9 (Exports CSV/FEC §21)** + **Parcours E2E 17 étapes (§36)** | `phase1-lot1-7.test.ts` | Planifié après Lot 1.6 (en attente d'accord) |

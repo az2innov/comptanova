@@ -547,6 +547,94 @@ export const POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS import_batches (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    import_type TEXT NOT NULL CHECK (import_type IN ('INVOICE_LISTING_CSV', 'INVOICE_LISTING_EXCEL', 'BANK_STATEMENT_CSV', 'BANK_STATEMENT_OFX')),
+    original_filename TEXT NOT NULL,
+    file_sha256_checksum TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PREVIEW_PENDING_VALIDATION', 'COMMITTED', 'FAILED_ROLLED_BACK', 'REJECTED_DUPLICATE')),
+    total_rows INTEGER NOT NULL DEFAULT 0 CHECK (total_rows >= 0),
+    valid_rows INTEGER NOT NULL DEFAULT 0 CHECK (valid_rows >= 0),
+    duplicate_rows INTEGER NOT NULL DEFAULT 0 CHECK (duplicate_rows >= 0),
+    error_rows INTEGER NOT NULL DEFAULT 0 CHECK (error_rows >= 0),
+    column_mapping_json TEXT NOT NULL DEFAULT '{}',
+    errors_report_json TEXT NOT NULL DEFAULT '[]',
+    imported_by_user_id TEXT NOT NULL REFERENCES users(id),
+    committed_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_pg_import_batches_org_dossier ON import_batches(organization_id, dossier_id, file_sha256_checksum);
+
+  CREATE TABLE IF NOT EXISTS bank_transactions (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    import_batch_id TEXT REFERENCES import_batches(id) ON DELETE SET NULL,
+    bank_account_iban_or_ref TEXT,
+    operation_date TEXT NOT NULL,
+    value_date TEXT,
+    label TEXT NOT NULL,
+    counterparty_name TEXT,
+    payment_reference TEXT,
+    amount_minor BIGINT NOT NULL,
+    currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+    currency_minor_unit_exponent INTEGER NOT NULL DEFAULT 2 CHECK (currency_minor_unit_exponent IN (0, 2, 3, 4)),
+    reconciled_amount_minor BIGINT NOT NULL DEFAULT 0,
+    reconciliation_status TEXT NOT NULL CHECK (reconciliation_status IN ('UNRECONCILED', 'SUGGESTED_BY_AI', 'PARTIALLY_RECONCILED', 'RECONCILED', 'BANK_FEE_OR_NO_RECEIPT_FLAGGED')),
+    external_dedup_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(dossier_id, external_dedup_hash)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_pg_bank_tx_org_dossier ON bank_transactions(organization_id, dossier_id, operation_date);
+
+  CREATE TABLE IF NOT EXISTS reconciliation_links (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    bank_transaction_id TEXT NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+    invoice_id TEXT REFERENCES invoices(id) ON DELETE CASCADE,
+    accounting_entry_id TEXT REFERENCES accounting_entries(id) ON DELETE SET NULL,
+    allocated_amount_minor BIGINT NOT NULL CHECK (allocated_amount_minor != 0),
+    currency TEXT NOT NULL CHECK (LENGTH(currency) = 3),
+    confidence_score REAL NOT NULL DEFAULT 1.0 CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0),
+    match_origin TEXT NOT NULL CHECK (match_origin IN ('DETERMINISTIC_RULE', 'AI_SUGGESTION', 'MANUAL_USER')),
+    validation_status TEXT NOT NULL CHECK (validation_status IN ('PROPOSED_BY_AI', 'NEEDS_HUMAN_REVIEW', 'VALIDATED_BY_HUMAN', 'REJECTED')),
+    validated_by_user_id TEXT REFERENCES users(id),
+    validated_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_pg_reconciliation_org_dossier ON reconciliation_links(organization_id, dossier_id);
+
+  CREATE TABLE IF NOT EXISTS anomalies (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    dossier_id TEXT NOT NULL REFERENCES client_dossiers(id) ON DELETE CASCADE,
+    rule_code TEXT NOT NULL,
+    rule_version_id TEXT NOT NULL REFERENCES country_config_versions(version_id),
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL_CERTAIN', 'SUSPICION_TO_VERIFY')),
+    is_certain_error INTEGER NOT NULL CHECK (is_certain_error IN (0, 1)),
+    target_entity_type TEXT NOT NULL,
+    target_entity_id TEXT,
+    message TEXT NOT NULL,
+    source_data_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL CHECK (status IN ('OPEN', 'IN_REVIEW', 'RESOLVED_BY_CORRECTION', 'DISMISSED_WITH_JUSTIFICATION')),
+    resolution_justification TEXT,
+    resolved_by_user_id TEXT REFERENCES users(id),
+    resolved_at TEXT,
+    history_json TEXT NOT NULL DEFAULT '[]',
+    detected_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_pg_anomalies_org_dossier_status ON anomalies(organization_id, dossier_id, status, severity);
+
   -- SEC-OPEN-04 : Trigger PostgreSQL 16 garantissant l'inaltérabilité (append-only) de audit_logs
   CREATE OR REPLACE FUNCTION prevent_audit_logs_mutation()
   RETURNS TRIGGER

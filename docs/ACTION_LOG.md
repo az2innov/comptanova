@@ -361,7 +361,60 @@
     8. Audit complémentaire Phase 0 & PostgreSQL 16 réel (5/5 pass)
 - **Réserves / Prochaines étapes** :
   - Le Lot 1.5 est finalisé, persistant et vérifié à 100%.
-  - Conformément à la directive d'incrémentalité stricte, arrêt après le Lot 1.5 en attente de la revue et de l'autorisation explicite de l'utilisateur avant d'engager le Lot 1.6 (Banque, rapprochement et anomalies).
+  - Clôture formelle et vérifications complémentaires consignées dans le commit `9aa0581`.
+
+---
+
+## ACT-0017 — 2026-10-18T22:45:00+01:00 — Implémentation du Lot 1.6 : Modules 5 & 6 — Import Bancaire (CSV/OFX), Rapprochement et Détection Déterministe d'Anomalies
+- **Objectif** : Implémenter intégralement les Modules 5 (Import et rapprochement bancaire §17) et 6 (Contrôles comptables et 10 règles déterministes d'anomalies §18), sans aucune validation automatique d'écriture comptable, avec déduplication stricte des imports et transactions, gestion des paiements partiels, et workflow de traitement des faux positifs (justification $\ge 10$ caractères).
+- **Périmètre & Fichiers modifiés** :
+  1. `src/services/bank-service.ts` *(NOUVEAU)* : Service bancaire complet comprenant :
+     - Parseurs robustes CSV (détection automatique de séparateurs `,`, `;`, `\t`, décimales `.`/`,`, dates ISO/FR/US, colonnes signées ou Débit/Crédit séparées) et OFX (SGML/XML, balises `<STMTTRN>`, `<DTPOSTED>`, `<TRNAMT>`, `<FITID>`, `<NAME>`, `<MEMO>`).
+     - Normalisation des encodages (UTF-8, Latin-1 / Windows-1252) et assainissement des chaînes.
+     - Contrôle strict anti-réimport de fichier via calcul d'empreinte SHA-256 du lot (`import_batches.file_sha256`) et rejet immédiat en cas de duplication.
+     - Déduplication unitaire des transactions au sein du dossier via `external_dedup_hash` (hachage normalisé date + montant + libellé / fitid).
+     - Moteur d'assistance au rapprochement calculant un score de confiance déterministe (0 à 100%) basé sur le montant exact (50 pts), la concordance de référence de facture dans le libellé bancaire (30 pts), la proximité du tiers (15 pts) et la fenêtre temporelle $\le 30$ jours (5 pts).
+     - Rapprochement assisté et manuel (`reconcileBankTransaction`) : **garantie absolue de non-création d'écriture comptable automatique** (zéro écriture insérée dans `accounting_entries`).
+     - Prise en charge des règlements partiels et cumulatifs avec mise à jour du statut de facture (`PARTIALLY_PAID` puis `PAID` uniquement lorsque `paid_amount_minor === gross_amount_minor`).
+     - Traitement du rejet de proposition (`rejectBankMatchingSuggestion`) et du marquage pour frais bancaires ou absence de justificatif (`flagBankTransactionNoReceipt`).
+  2. `src/services/anomaly-service.ts` *(NOUVEAU)* : Moteur de détection déterministe d'anomalies (§18) :
+     - Implémentation complète et déterministe des **10 règles de contrôle** :
+       1. `RULE_VAT_CALCULATION_MISMATCH` : Incohérence arithmétique de TVA ($\text{HT} + \text{TVA} \neq \text{TTC}$ ou taux invalide).
+       2. `RULE_UNBALANCED_ACCOUNTING_ENTRY` : Écriture comptable déséquilibrée ($\sum \text{Débit} \neq \sum \text{Crédit}$).
+       3. `RULE_DUPLICATE_INVOICE_NUMBER` : Doublons potentiels de factures (même tiers + même numéro ou même date/montant).
+       4. `RULE_INVOICE_SEQUENCE_GAP` : Rupture de séquence chronologique dans les factures émises.
+       5. `RULE_UNRECONCILED_DEBIT_WITHOUT_INVOICE` : Opération bancaire débitrice sans facture ni justificatif associé.
+       6. `RULE_EXPENSE_WITHOUT_RECEIPT` : Facture reçue d'achat sans document justificatif rattaché (`document_id IS NULL`).
+       7. `RULE_AMOUNT_MISMATCH_INVOICE_DOCUMENT` : Discordance de montant entre facture et métadonnées du document extrait.
+       8. `RULE_PAYMENT_OVERALLOCATED` : Montant rapproché supérieur au montant TTC de la facture.
+       9. `RULE_OVERDUE_UNPAID_INVOICE` : Facture impayée dont la date d'échéance contractuelle est dépassée.
+       10. `RULE_OLD_UNRECONCILED_BANK_TX` : Opération bancaire ancienne non rapprochée ($> 60$ jours).
+     - Balayage idempotent `scanDossierAnomalies` évitant toute duplication d'anomalie ouverte pour la même règle et la même cible.
+     - Traitement formel des faux positifs (`resolveAnomaly`) : statut `RESOLVED_BY_CORRECTION` ou `DISMISSED_WITH_JUSTIFICATION` exigeant impérativement un motif explicite d'au moins 10 caractères, archivé dans `history_json`.
+  3. `src/server.ts` :
+     - Exposition sécurisée des 8 routes REST :
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/bank/import`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/bank/transactions`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/bank/reconcile`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/bank/transactions/:txId/reject-suggestion`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/bank/transactions/:txId/flag-no-receipt`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/anomalies/scan`
+       - `GET /api/organizations/:orgId/dossiers/:dossierId/anomalies`
+       - `POST /api/organizations/:orgId/dossiers/:dossierId/anomalies/:anomalyId/resolve`
+  4. `src/ui/app-view.ts` :
+     - Implémentation complète des interfaces `#tab-banking` et `#tab-anomalies` :
+       - Banque : En-tête KPI (opérations totales, rapprochées, en attente, solde net), téléversement glisser-déposer CSV/OFX, table des opérations avec badges de statut et score de suggestion, modale de rapprochement manuel/assisté avec recherche de factures, modale de marquage sans justificatif.
+       - Anomalies : En-tête KPI (erreurs certaines, suspicions, alertes, total résolues), bouton de lancement du scan déterministe, filtres par sévérité/statut, modale de clôture avec saisie de justification obligatoire ($\ge 10$ car.).
+       - Respect strict du Design System ComptaNova : zéro couleur hexadécimale codée en dur en dehors des variables de `:root`.
+  5. `src/db/phase1-readiness-migration.ts` :
+     - Alignement complet du schéma DDL PostgreSQL 16 dans `POSTGRESQL_COMPATIBLE_FULL_SCHEMA_SQL` pour les tables `import_batches`, `bank_transactions`, `reconciliation_links` et `anomalies`.
+  6. `src/tests/phase1-lot1-6.test.ts` *(NOUVEAU)* :
+     - Suite automatisée de 11 tests exhaustifs couvrant : parsing CSV/OFX, anti-réimport SHA-256, déduplication unitaire, calcul du score de rapprochement, non-création d'écriture comptable, multi-paiements partiels, frais bancaires/sans justificatif, les 10 règles d'anomalies (§18), résolution avec justification $\ge 10$ car., étanchéité multi-tenant et vérification réelle sur instance PostgreSQL 16.
+- **Résultats des tests** :
+  - Commande : `npm test` (`npm run build && node --test dist/tests/*.test.js`)
+  - Résultat : **80/80 tests passants** (9 suites de tests, 0 échec, durée `2613.76 ms`).
+- **Arrêt et point d'étape** :
+  - Fin d'exécution du Lot 1.6. Arrêt strict sans enchaînement sur le Lot 1.7 et sans push distant, dans l'attente des instructions de l'utilisateur.
 
 
 

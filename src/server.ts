@@ -70,6 +70,18 @@ import {
   listAccountingEntries,
 } from "./services/accounting-service.js";
 import {
+  importBankStatement,
+  listBankTransactions,
+  reconcileBankTransaction,
+  rejectReconciliationSuggestion,
+  flagBankTransactionNoReceipt,
+} from "./services/bank-service.js";
+import {
+  scanDossierAnomalies,
+  listDossierAnomalies,
+  resolveDossierAnomaly,
+} from "./services/anomaly-service.js";
+import {
   listAuditLogsForOrganization,
   verifyAuditChainIntegrity,
 } from "./audit/audit-service.js";
@@ -1354,6 +1366,178 @@ export function createAppServer(
               db,
             });
             sendJson(res, 200, result);
+            return;
+          }
+
+          // =================================================================
+          // MODULE 5 : IMPORT BANCAIRE ET RAPPROCHEMENT (§17)
+          // =================================================================
+          // 1. Import de relevé : POST /api/organizations/:orgId/dossiers/:dossierId/bank/import
+          if (method === "POST" && dossierAction === "bank/import") {
+            const body = await readJsonBody(req);
+            let fileBuffer: Buffer;
+            if (body.fileBase64) {
+              fileBuffer = Buffer.from(String(body.fileBase64), "base64");
+            } else if (body.content) {
+              fileBuffer = Buffer.from(String(body.content), "utf8");
+            } else {
+              throw new Error("Le fichier de relevé bancaire est requis (base64 ou content).");
+            }
+
+            const filename = (body.filename ? String(body.filename) : "releve.csv").trim();
+            const importType = body.importType === "BANK_STATEMENT_OFX" ? "BANK_STATEMENT_OFX" : "BANK_STATEMENT_CSV";
+
+            const result = importBankStatement({
+              session,
+              organizationId: orgId,
+              dossierId,
+              fileBuffer,
+              filename,
+              importType,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 201, { batch: result });
+            return;
+          }
+
+          // 2. Consultation des transactions : GET /api/organizations/:orgId/dossiers/:dossierId/bank/transactions
+          if (method === "GET" && dossierAction === "bank/transactions") {
+            const status = parsedUrl.searchParams.get("status") || undefined;
+            const startDate = parsedUrl.searchParams.get("startDate") || undefined;
+            const endDate = parsedUrl.searchParams.get("endDate") || undefined;
+            const search = parsedUrl.searchParams.get("search") || undefined;
+            const limit = parsedUrl.searchParams.get("limit") ? parseInt(parsedUrl.searchParams.get("limit")!, 10) : undefined;
+            const offset = parsedUrl.searchParams.get("offset") ? parseInt(parsedUrl.searchParams.get("offset")!, 10) : undefined;
+
+            const result = listBankTransactions({
+              session,
+              organizationId: orgId,
+              dossierId,
+              status,
+              startDate,
+              endDate,
+              search,
+              limit,
+              offset,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 3. Rapprochement bancaire : POST /api/organizations/:orgId/dossiers/:dossierId/bank/reconcile
+          if (method === "POST" && dossierAction === "bank/reconcile") {
+            const body = await readJsonBody(req);
+            const rawMatchOrigin = body.matchOrigin;
+            const matchOrigin = (rawMatchOrigin === "AI_SUGGESTION" || rawMatchOrigin === "DETERMINISTIC_RULE" || rawMatchOrigin === "MANUAL_USER")
+              ? rawMatchOrigin
+              : "MANUAL_USER";
+            const result = reconcileBankTransaction({
+              session,
+              organizationId: orgId,
+              dossierId,
+              transactionId: String(body.transactionId),
+              invoiceId: String(body.invoiceId),
+              allocatedAmountMinor: body.allocatedAmountMinor !== undefined ? Number(body.allocatedAmountMinor) : undefined,
+              matchOrigin,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 4. Rejet de suggestion : POST /api/organizations/:orgId/dossiers/:dossierId/bank/transactions/:txId/reject-suggestion
+          const rejectSuggestionMatch = dossierAction.match(/^bank\/transactions\/([^/]+)\/reject-suggestion$/);
+          if (method === "POST" && rejectSuggestionMatch) {
+            const transactionId = decodeURIComponent(rejectSuggestionMatch[1]!);
+            const body = await readJsonBody(req).catch(() => ({} as Record<string, unknown>));
+            const result = rejectReconciliationSuggestion({
+              session,
+              organizationId: orgId,
+              dossierId,
+              transactionId,
+              reason: body.reason ? String(body.reason) : undefined,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 5. Marquage sans justificatif : POST /api/organizations/:orgId/dossiers/:dossierId/bank/transactions/:txId/flag-no-receipt
+          const flagNoReceiptMatch = dossierAction.match(/^bank\/transactions\/([^/]+)\/flag-no-receipt$/);
+          if (method === "POST" && flagNoReceiptMatch) {
+            const transactionId = decodeURIComponent(flagNoReceiptMatch[1]!);
+            const result = flagBankTransactionNoReceipt({
+              session,
+              organizationId: orgId,
+              dossierId,
+              transactionId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // =================================================================
+          // MODULE 6 : CONTRÔLES COMPTABLES ET ANOMALIES (§18)
+          // =================================================================
+          // 6. Scan des 10 règles : POST /api/organizations/:orgId/dossiers/:dossierId/anomalies/scan
+          if (method === "POST" && dossierAction === "anomalies/scan") {
+            const result = scanDossierAnomalies({
+              session,
+              organizationId: orgId,
+              dossierId,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 7. Liste des anomalies : GET /api/organizations/:orgId/dossiers/:dossierId/anomalies
+          if (method === "GET" && dossierAction === "anomalies") {
+            const status = parsedUrl.searchParams.get("status") || undefined;
+            const severity = parsedUrl.searchParams.get("severity") || undefined;
+            const category = parsedUrl.searchParams.get("category") || undefined;
+            const isCertainParam = parsedUrl.searchParams.get("isCertainError");
+            const isCertainError = isCertainParam !== null ? isCertainParam === "true" || isCertainParam === "1" : undefined;
+
+            const result = listDossierAnomalies({
+              session,
+              organizationId: orgId,
+              dossierId,
+              status,
+              severity,
+              isCertainError,
+              category,
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, result);
+            return;
+          }
+
+          // 8. Résolution / Classement anomalie : POST /api/organizations/:orgId/dossiers/:dossierId/anomalies/:anomalyId/resolve
+          const resolveAnomalyMatch = dossierAction.match(/^anomalies\/([^/]+)\/resolve$/);
+          if (method === "POST" && resolveAnomalyMatch) {
+            const anomalyId = decodeURIComponent(resolveAnomalyMatch[1]!);
+            const body = await readJsonBody(req);
+            const result = resolveDossierAnomaly({
+              session,
+              organizationId: orgId,
+              dossierId,
+              anomalyId,
+              resolutionStatus: body.resolutionStatus === "DISMISSED_WITH_JUSTIFICATION" ? "DISMISSED_WITH_JUSTIFICATION" : "RESOLVED_BY_CORRECTION",
+              resolutionJustification: String(body.resolutionJustification || ""),
+              platformAdminJustification,
+              db,
+            });
+            sendJson(res, 200, { anomaly: result });
             return;
           }
         }

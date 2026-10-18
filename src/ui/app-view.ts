@@ -1347,13 +1347,121 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 6 : BANQUE & RAPPROCHEMENT (Lot 1.5) -->
+      <!-- ONGLET 6 : BANQUE & RAPPROCHEMENT (Lot 1.6) -->
       <section id="tab-banking" class="tab-panel hidden">
+        <div class="cn-state-box cn-state-confirm" style="margin-bottom:1rem;">
+          <strong>Banque &amp; Rapprochements (§17) :</strong> Import des relevés bancaires (CSV &amp; OFX) avec détection d'idempotence SHA-256. Chaque proposition de rapprochement requiert une validation humaine explicite avant lettrage comptable définitif.
+        </div>
+
+        <!-- Synthèse financière bancaire -->
+        <div class="card" style="margin-bottom:1rem;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
+            <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+              <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Opérations importées</div>
+              <div id="bank-stat-total" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-brand-primary);">-</div>
+            </div>
+            <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+              <div style="font-size:0.8rem; color:var(--cn-text-secondary);">En attente de rapprochement</div>
+              <div id="bank-stat-unreconciled" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-status-warning);">-</div>
+            </div>
+            <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+              <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Rapprochées</div>
+              <div id="bank-stat-reconciled" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-status-success);">-</div>
+            </div>
+            <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+              <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Frais / Sans justificatif</div>
+              <div id="bank-stat-flagged" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-text-secondary);">-</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Formulaire d'import de relevé -->
+        <div class="card" style="margin-bottom:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+            <h3 style="margin:0;">+ Importer un relevé bancaire (CSV ou OFX)</h3>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; align-items:end;">
+            <div>
+              <label for="bank-file-input">Fichier relevé (.csv, .ofx, .txt) :</label>
+              <input type="file" id="bank-file-input" accept=".csv,.ofx,.txt" style="width:100%; font-size:0.85rem;" />
+            </div>
+            <div>
+              <label for="bank-import-type-select">Format du fichier :</label>
+              <select id="bank-import-type-select" style="width:100%;">
+                <option value="BANK_STATEMENT_CSV">CSV standard (séparateurs ;, ,, tab)</option>
+                <option value="BANK_STATEMENT_OFX">OFX / Open Financial Exchange (SGML/XML)</option>
+              </select>
+            </div>
+            <div>
+              <button type="button" id="btn-import-bank" class="btn-primary" style="width:100%;">
+                📥 Importer le relevé
+              </button>
+            </div>
+          </div>
+          <div id="bank-import-feedback" style="margin-top:0.5rem; font-size:0.85rem;"></div>
+        </div>
+
+        <!-- Liste des opérations bancaires -->
         <div class="card">
-          <h3>Module 6 — Import CSV &amp; Rapprochement bancaire assisté (Planifié au Lot 1.5)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Import de relevés bancaires CSV avec déduplication et suggestions de rapprochement justifiées — livré au Lot 1.5.
-          </p>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
+            <h3 style="margin:0;">Livre de Banque &amp; Rapprochement des opérations</h3>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="bank-filter-status" style="font-size:0.85rem;">
+                <option value="ALL">Tous les statuts</option>
+                <option value="UNRECONCILED">En attente (Non rapproché)</option>
+                <option value="PARTIALLY_RECONCILED">Partiellement rapproché</option>
+                <option value="RECONCILED">Rapproché (Soldé)</option>
+                <option value="BANK_FEE_OR_NO_RECEIPT_FLAGGED">Frais / Sans justificatif</option>
+              </select>
+              <input type="text" id="bank-search-input" placeholder="Rechercher libellé ou réf..." style="font-size:0.85rem; padding:0.35rem 0.5rem;" />
+              <button type="button" id="btn-refresh-bank" class="btn-secondary" style="font-size:0.85rem;">Actualiser</button>
+            </div>
+          </div>
+
+          <div id="bank-state-container">
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date d'opération</th>
+                    <th>Libellé &amp; Référence</th>
+                    <th style="text-align:right;">Montant</th>
+                    <th>Statut</th>
+                    <th>Suggestion / Correspondance</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="bank-tx-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modale de rapprochement manuel -->
+        <div id="bank-reconcile-modal" class="modal-overlay hidden">
+          <div class="modal-box card" style="max-width:700px; max-height:85vh; overflow-y:auto;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--cn-border); padding-bottom:0.75rem; margin-bottom:1rem;">
+              <h3 style="margin:0;">Rapprochement de l'opération bancaire</h3>
+              <button type="button" id="bank-reconcile-modal-close" class="btn-secondary" style="padding:0.25rem 0.5rem;">✕</button>
+            </div>
+            <div id="bank-reconcile-tx-summary" style="background:var(--cn-bg-app); padding:0.75rem; border-radius:6px; margin-bottom:1rem; font-size:0.9rem;"></div>
+            
+            <h4 style="margin-top:0;">Sélectionner la facture à rapprocher :</h4>
+            <div id="bank-reconcile-invoices-list" style="max-height:220px; overflow-y:auto; border:1px solid var(--cn-border); border-radius:6px; margin-bottom:1rem;"></div>
+
+            <div style="margin-bottom:1rem;">
+              <label for="bank-reconcile-allocated-amount">Montant alloué (€) :</label>
+              <input type="number" id="bank-reconcile-allocated-amount" step="0.01" style="width:100%; font-family:monospace;" />
+              <div style="font-size:0.8rem; color:var(--cn-text-secondary); margin-top:0.25rem;">
+                Pour un paiement partiel, vous pouvez ajuster le montant alloué au centime près.
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; border-top:1px solid var(--cn-border); padding-top:0.75rem;">
+              <button type="button" id="bank-reconcile-cancel-btn" class="btn-secondary">Annuler</button>
+              <button type="button" id="bank-reconcile-confirm-btn" class="btn-primary">Valider le rapprochement</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1377,13 +1485,105 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
       </section>
 
-      <!-- ONGLET 9 : ANOMALIES & CONTRÔLES (Lot 1.5) -->
+      <!-- ONGLET 9 : ANOMALIES & CONTRÔLES (Lot 1.6) -->
       <section id="tab-anomalies" class="tab-panel hidden">
+        <div class="cn-state-box cn-state-confirm" style="margin-bottom:1rem;">
+          <strong>Contrôles déterministes &amp; Détection d'anomalies (§18) :</strong> 10 règles strictes de vérification comptable et fiscale. ComptaNova distingue formellement les erreurs certaines (bloquantes) des alertes nécessitant un examen humain, et offre une traçabilité intégrale pour le traitement des faux positifs.
+        </div>
+
+        <!-- Cartes synthétiques des anomalies -->
+        <div class="card" style="margin-bottom:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; flex:1;">
+              <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+                <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Erreurs certaines (Bloquantes)</div>
+                <div id="anomalies-stat-critical" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-status-danger);">-</div>
+              </div>
+              <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+                <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Suspicions &amp; Alertes à vérifier</div>
+                <div id="anomalies-stat-suspicion" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-status-warning);">-</div>
+              </div>
+              <div style="padding:0.75rem; border:1px solid var(--cn-border); border-radius:6px; background:var(--cn-bg-surface);">
+                <div style="font-size:0.8rem; color:var(--cn-text-secondary);">Anomalies résolues / Classées</div>
+                <div id="anomalies-stat-resolved" class="font-mono-tabular" style="font-size:1.4rem; font-weight:700; color:var(--cn-status-success);">-</div>
+              </div>
+            </div>
+            <div>
+              <button type="button" id="btn-scan-anomalies" class="btn-primary" style="padding:0.6rem 1.2rem; font-weight:600;">
+                🔍 Lancer le scan des 10 règles (§18)
+              </button>
+            </div>
+          </div>
+          <div id="anomalies-scan-feedback" style="font-size:0.85rem;"></div>
+        </div>
+
+        <!-- Tableau des anomalies -->
         <div class="card">
-          <h3>Module 9 — Contrôles de cohérence &amp; Détection d'anomalies (Planifié au Lot 1.5)</h3>
-          <p style="color:var(--cn-text-secondary); font-size:0.9rem;">
-            Moteur de détection déterministe (doublons, écarts HT/TVA/TTC, pièces manquantes, séquences interrompues) — livré au Lot 1.5.
-          </p>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem;">
+            <h3 style="margin:0;">Registre des Anomalies et Suspicion de Déviance</h3>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <select id="anomalies-filter-severity" style="font-size:0.85rem;">
+                <option value="ALL">Toutes gravités</option>
+                <option value="CRITICAL_CERTAIN">Erreurs certaines</option>
+                <option value="SUSPICION_TO_VERIFY">Suspicions à vérifier</option>
+                <option value="WARNING">Alertes</option>
+              </select>
+              <select id="anomalies-filter-status" style="font-size:0.85rem;">
+                <option value="ALL">Tous statuts</option>
+                <option value="OPEN">Ouvertes</option>
+                <option value="RESOLVED_BY_CORRECTION">Corrigées</option>
+                <option value="DISMISSED_WITH_JUSTIFICATION">Classées (Faux positif)</option>
+              </select>
+              <button type="button" id="btn-refresh-anomalies" class="btn-secondary" style="font-size:0.85rem;">Actualiser</button>
+            </div>
+          </div>
+
+          <div id="anomalies-state-container">
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Gravité</th>
+                    <th>Règle &amp; Code</th>
+                    <th>Description de l'anomalie</th>
+                    <th>Cible</th>
+                    <th>Détecté le</th>
+                    <th>Statut</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="anomalies-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modale de classement / résolution d'anomalie -->
+        <div id="anomaly-resolve-modal" class="modal-overlay hidden">
+          <div class="modal-box card" style="max-width:550px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--cn-border); padding-bottom:0.75rem; margin-bottom:1rem;">
+              <h3 id="anomaly-modal-title" style="margin:0;">Traitement de l'anomalie</h3>
+              <button type="button" id="anomaly-modal-close" class="btn-secondary" style="padding:0.25rem 0.5rem;">✕</button>
+            </div>
+
+            <div id="anomaly-modal-details" style="font-size:0.9rem; margin-bottom:1rem;"></div>
+
+            <div style="margin-bottom:1rem;">
+              <label for="anomaly-resolve-status-select">Action à appliquer :</label>
+              <select id="anomaly-resolve-status-select" style="width:100%; margin-bottom:0.75rem;">
+                <option value="RESOLVED_BY_CORRECTION">Résolue par correction de la pièce / écriture</option>
+                <option value="DISMISSED_WITH_JUSTIFICATION">Classer comme exception / faux positif justifié</option>
+              </select>
+
+              <label for="anomaly-resolve-justification">Justification motivée obligatoire (min. 10 caractères) :</label>
+              <textarea id="anomaly-resolve-justification" rows="3" style="width:100%; font-size:0.9rem;" placeholder="Expliquez la correction apportée ou le motif du classement..."></textarea>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; border-top:1px solid var(--cn-border); padding-top:0.75rem;">
+              <button type="button" id="anomaly-modal-cancel-btn" class="btn-secondary">Annuler</button>
+              <button type="button" id="anomaly-modal-confirm-btn" class="btn-primary">Confirmer le traitement</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1698,6 +1898,20 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           showJournalNoDossierState();
         }
       }
+      if (targetTabId === "tab-banking") {
+        if (activeDossierId) {
+          loadBankTransactions(activeDossierId);
+        } else {
+          showBankNoDossierState();
+        }
+      }
+      if (targetTabId === "tab-anomalies") {
+        if (activeDossierId) {
+          loadAnomaliesList(activeDossierId);
+        } else {
+          showAnomaliesNoDossierState();
+        }
+      }
     }
 
     document.querySelectorAll(".nav-btn, .nav-sub-btn").forEach((btn) => {
@@ -1736,6 +1950,20 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           await loadAccountingEntriesList(activeDossierId);
         } else {
           showJournalNoDossierState();
+        }
+      }
+      if (!document.getElementById("tab-banking").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadBankTransactions(activeDossierId);
+        } else {
+          showBankNoDossierState();
+        }
+      }
+      if (!document.getElementById("tab-anomalies").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadAnomaliesList(activeDossierId);
+        } else {
+          showAnomaliesNoDossierState();
         }
       }
     });
@@ -3606,6 +3834,536 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
     document.getElementById("entry-modal-close-btn").addEventListener("click", () => {
       document.getElementById("entry-detail-modal").classList.add("hidden");
+    });
+
+    // =========================================================================
+    // JAVASCRIPT MODULE 5 : IMPORT BANCAIRE & RAPPROCHEMENT (§17)
+    // =========================================================================
+    let currentBankReconcileTx = null;
+
+    function showBankNoDossierState() {
+      document.getElementById("bank-stat-total").textContent = "-";
+      document.getElementById("bank-stat-unreconciled").textContent = "-";
+      document.getElementById("bank-stat-reconciled").textContent = "-";
+      document.getElementById("bank-stat-flagged").textContent = "-";
+      const tbody = document.getElementById("bank-tx-tbody");
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--cn-text-secondary);">' +
+        '<div class="cn-state-box cn-state-empty">Veuillez sélectionner un dossier client actif dans la barre supérieure pour consulter ou importer ses opérations bancaires.</div></td></tr>';
+    }
+
+    async function loadBankTransactions(dossierId) {
+      if (!dossierId) {
+        showBankNoDossierState();
+        return;
+      }
+      const tbody = document.getElementById("bank-tx-tbody");
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--cn-text-secondary);"><div class="cn-state-box cn-state-loading">Chargement des opérations bancaires...</div></td></tr>';
+
+      try {
+        const filterStatus = document.getElementById("bank-filter-status").value;
+        const search = document.getElementById("bank-search-input").value.trim();
+
+        let url = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/bank/transactions?limit=100";
+        if (filterStatus && filterStatus !== "ALL") url += "&status=" + encodeURIComponent(filterStatus);
+        if (search) url += "&search=" + encodeURIComponent(search);
+
+        const data = await apiFetch(url);
+        const txs = data.transactions || [];
+
+        // Compteurs statistiques
+        let unreconciledCount = 0;
+        let reconciledCount = 0;
+        let flaggedCount = 0;
+        txs.forEach((t) => {
+          if (t.reconciliationStatus === "UNRECONCILED" || t.reconciliationStatus === "SUGGESTED_BY_AI") unreconciledCount++;
+          else if (t.reconciliationStatus === "RECONCILED" || t.reconciliationStatus === "PARTIALLY_RECONCILED") reconciledCount++;
+          else if (t.reconciliationStatus === "BANK_FEE_OR_NO_RECEIPT_FLAGGED") flaggedCount++;
+        });
+
+        document.getElementById("bank-stat-total").textContent = txs.length;
+        document.getElementById("bank-stat-unreconciled").textContent = unreconciledCount;
+        document.getElementById("bank-stat-reconciled").textContent = reconciledCount;
+        document.getElementById("bank-stat-flagged").textContent = flaggedCount;
+
+        if (txs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:2rem; color:var(--cn-text-secondary);">' +
+            '<div class="cn-state-box cn-state-empty">Aucune opération bancaire trouvée pour ce dossier. Utilisez le formulaire ci-dessus pour importer un fichier CSV ou OFX.</div></td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = "";
+        txs.forEach((t) => {
+          const tr = document.createElement("tr");
+
+          const isDebit = t.amountMinor < 0;
+          const absAmount = Math.abs(t.amountMinor) / 100;
+          const formattedAmount = (isDebit ? "- " : "+ ") + absAmount.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+          const amountColor = isDebit ? "var(--cn-status-danger)" : "var(--cn-status-success)";
+
+          let statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-border); color:var(--cn-text-secondary);">En attente</span>';
+          if (t.reconciliationStatus === "PARTIALLY_RECONCILED") {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-warning); color:var(--cn-status-warning);">Partiel (' + (t.reconciledAmountMinor / 100).toFixed(2) + ' €)</span>';
+          } else if (t.reconciliationStatus === "RECONCILED") {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-success); color:var(--cn-status-success);">✓ Rapproché</span>';
+          } else if (t.reconciliationStatus === "BANK_FEE_OR_NO_RECEIPT_FLAGGED") {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-border); color:var(--cn-text-secondary);">Frais bancaire</span>';
+          } else if (t.suggestedMatch) {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-brand-action); color:var(--cn-brand-action);">Suggestion IA (' + Math.round(t.suggestedMatch.confidenceScore * 100) + ' %)</span>';
+          }
+
+          let matchCol = '<span style="color:var(--cn-text-secondary); font-size:0.85rem;">-</span>';
+          if (t.suggestedMatch) {
+            matchCol = '<div style="font-size:0.85rem;">' +
+              '<strong>' + t.suggestedMatch.invoiceNumber + '</strong> (' + t.suggestedMatch.thirdPartyName + ')<br/>' +
+              '<span style="color:var(--cn-text-secondary);">' + t.suggestedMatch.matchReason + '</span>' +
+              '</div>';
+          }
+
+          let actionCol = '<div style="display:flex; justify-content:flex-end; gap:0.35rem; flex-wrap:wrap;">';
+          if (t.reconciliationStatus !== "RECONCILED") {
+            if (t.suggestedMatch) {
+              actionCol += '<button type="button" class="btn-primary btn-sm btn-confirm-match" data-txid="' + t.id + '" data-invid="' + t.suggestedMatch.invoiceId + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">✓ Valider</button>';
+              actionCol += '<button type="button" class="btn-secondary btn-sm btn-reject-match" data-txid="' + t.id + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">Rejeter</button>';
+            }
+            actionCol += '<button type="button" class="btn-secondary btn-sm btn-manual-reconcile" data-tx=\'' + JSON.stringify(t).replace(/'/g, "&#39;") + '\' style="font-size:0.75rem; padding:0.2rem 0.5rem;">Rapprocher...</button>';
+            if (t.reconciliationStatus !== "BANK_FEE_OR_NO_RECEIPT_FLAGGED") {
+              actionCol += '<button type="button" class="btn-secondary btn-sm btn-flag-no-receipt" data-txid="' + t.id + '" style="font-size:0.75rem; padding:0.2rem 0.5rem; color:var(--cn-text-secondary);">Frais</button>';
+            }
+          } else {
+            actionCol += '<span style="color:var(--cn-status-success); font-size:0.8rem; font-weight:600;">Lettré</span>';
+          }
+          actionCol += '</div>';
+
+          tr.innerHTML =
+            '<td class="font-mono-tabular">' + t.operationDate + '</td>' +
+            '<td><strong>' + t.label + '</strong>' + (t.paymentReference ? '<br/><span style="font-size:0.8rem; color:var(--cn-text-secondary); font-family:monospace;">Réf: ' + t.paymentReference + '</span>' : '') + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right; font-weight:600; color:' + amountColor + ';">' + formattedAmount + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + matchCol + '</td>' +
+            '<td>' + actionCol + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        // Câblage des boutons d'actions par ligne
+        tbody.querySelectorAll(".btn-confirm-match").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const txId = btn.getAttribute("data-txid");
+            const invId = btn.getAttribute("data-invid");
+            await reconcileBankTransactionAction(txId, invId);
+          });
+        });
+
+        tbody.querySelectorAll(".btn-reject-match").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const txId = btn.getAttribute("data-txid");
+            await rejectSuggestionAction(txId);
+          });
+        });
+
+        tbody.querySelectorAll(".btn-manual-reconcile").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const raw = btn.getAttribute("data-tx");
+            const tx = JSON.parse(raw);
+            openReconciliationModal(tx);
+          });
+        });
+
+        tbody.querySelectorAll(".btn-flag-no-receipt").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const txId = btn.getAttribute("data-txid");
+            await flagNoReceiptAction(txId);
+          });
+        });
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--cn-status-danger);"><div class="cn-state-box cn-state-error">Erreur de chargement bancaire : ' + err.message + '</div></td></tr>';
+      }
+    }
+
+    async function importBankStatementAction() {
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client avant d'importer un relevé.", true);
+        return;
+      }
+      const fileInput = document.getElementById("bank-file-input");
+      if (!fileInput.files || fileInput.files.length === 0) {
+        showFeedback("Veuillez choisir un fichier de relevé bancaire à importer.", true);
+        return;
+      }
+      const file = fileInput.files[0];
+      const importType = document.getElementById("bank-import-type-select").value;
+      const feedbackEl = document.getElementById("bank-import-feedback");
+      feedbackEl.innerHTML = '<span style="color:var(--cn-brand-action);">Importation et déduplication en cours...</span>';
+
+      try {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          try {
+            const base64 = e.target.result.split(",")[1];
+            const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/bank/import", {
+              method: "POST",
+              body: JSON.stringify({
+                fileBase64: base64,
+                filename: file.name,
+                importType: importType,
+              }),
+            });
+            const batch = res.batch;
+            feedbackEl.innerHTML = '<span style="color:var(--cn-status-success); font-weight:600;">' +
+              '✓ Import réussi : ' + batch.validRows + ' opérations importées (' + batch.duplicateRows + ' doublons ignorés, ' + batch.errorRows + ' erreurs).' +
+              '</span>';
+            fileInput.value = "";
+            showFeedback("Relevé bancaire importé avec succès.");
+            await loadBankTransactions(activeDossierId);
+          } catch (err) {
+            feedbackEl.innerHTML = '<span style="color:var(--cn-status-danger); font-weight:600;">Erreur lors de l\'import : ' + err.message + '</span>';
+            showFeedback(err.message, true);
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        feedbackEl.innerHTML = '<span style="color:var(--cn-status-danger);">Erreur : ' + err.message + '</span>';
+        showFeedback(err.message, true);
+      }
+    }
+
+    async function openReconciliationModal(tx) {
+      currentBankReconcileTx = tx;
+      const modal = document.getElementById("bank-reconcile-modal");
+      const summaryEl = document.getElementById("bank-reconcile-tx-summary");
+      const invoicesListEl = document.getElementById("bank-reconcile-invoices-list");
+      const amountInput = document.getElementById("bank-reconcile-allocated-amount");
+
+      const absAmount = (Math.abs(tx.amountMinor) - (tx.reconciledAmountMinor || 0)) / 100;
+      summaryEl.innerHTML =
+        '<strong>Opération :</strong> ' + tx.operationDate + ' — ' + tx.label + '<br/>' +
+        '<strong>Solde à rapprocher :</strong> <span class="font-mono-tabular" style="font-weight:700;">' + absAmount.toFixed(2) + ' €</span>';
+
+      invoicesListEl.innerHTML = '<div style="padding:1rem; text-align:center; color:var(--cn-text-secondary);">Recherche des factures du dossier...</div>';
+      modal.classList.remove("hidden");
+
+      try {
+        const data = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/invoices");
+        const invoices = (data.invoices || []).filter((i) => i.paymentStatus !== "PAID");
+
+        if (invoices.length === 0) {
+          invoicesListEl.innerHTML = '<div style="padding:1rem; text-align:center; color:var(--cn-text-secondary);">Aucune facture ouverte en attente de règlement dans ce dossier.</div>';
+          amountInput.value = absAmount.toFixed(2);
+          return;
+        }
+
+        invoicesListEl.innerHTML = "";
+        invoices.forEach((inv, idx) => {
+          const invRemaining = (inv.totalAmountTtcMinor - inv.paidAmountMinor) / 100;
+          const row = document.createElement("div");
+          row.style.padding = "0.5rem 0.75rem";
+          row.style.borderBottom = "1px solid var(--cn-border)";
+          row.style.display = "flex";
+          row.style.alignItems = "center";
+          row.style.gap = "0.5rem";
+          row.style.cursor = "pointer";
+
+          row.innerHTML =
+            '<input type="radio" name="reconcile-invoice-radio" id="rec-inv-' + inv.id + '" value="' + inv.id + '" data-remaining="' + invRemaining.toFixed(2) + '" ' + (idx === 0 ? "checked" : "") + ' />' +
+            '<label for="rec-inv-' + inv.id + '" style="flex:1; cursor:pointer; margin:0; font-size:0.88rem;">' +
+            '<strong>' + inv.invoiceNumber + '</strong> — ' + inv.clientName + ' (' + inv.issueDate + ') — ' +
+            'Reste dû : <span class="font-mono-tabular" style="font-weight:600;">' + invRemaining.toFixed(2) + ' €</span>' +
+            '</label>';
+
+          row.addEventListener("click", () => {
+            const radio = row.querySelector("input[type=radio]");
+            radio.checked = true;
+            const rem = parseFloat(radio.getAttribute("data-remaining"));
+            amountInput.value = Math.min(absAmount, rem).toFixed(2);
+          });
+
+          invoicesListEl.appendChild(row);
+        });
+
+        // Valeur initiale proposée
+        const firstRadio = invoicesListEl.querySelector("input[type=radio]:checked");
+        if (firstRadio) {
+          const rem = parseFloat(firstRadio.getAttribute("data-remaining"));
+          amountInput.value = Math.min(absAmount, rem).toFixed(2);
+        } else {
+          amountInput.value = absAmount.toFixed(2);
+        }
+      } catch (err) {
+        invoicesListEl.innerHTML = '<div style="padding:1rem; color:var(--cn-status-danger);">Erreur : ' + err.message + '</div>';
+      }
+    }
+
+    async function reconcileBankTransactionAction(txId, invoiceId, allocatedAmountMinor) {
+      try {
+        const body = { transactionId: txId, invoiceId: invoiceId };
+        if (allocatedAmountMinor !== undefined) {
+          body.allocatedAmountMinor = allocatedAmountMinor;
+        }
+        await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/bank/reconcile", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        showFeedback("Rapprochement bancaire enregistré avec succès.");
+        document.getElementById("bank-reconcile-modal").classList.add("hidden");
+        await loadBankTransactions(activeDossierId);
+      } catch (err) {
+        showFeedback("Échec du rapprochement : " + err.message, true);
+      }
+    }
+
+    async function rejectSuggestionAction(txId) {
+      try {
+        await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/bank/transactions/" + txId + "/reject-suggestion", {
+          method: "POST",
+          body: JSON.stringify({ reason: "Rejet manuel de la suggestion" }),
+        });
+        showFeedback("Suggestion de rapprochement rejetée.");
+        await loadBankTransactions(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    async function flagNoReceiptAction(txId) {
+      try {
+        await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/bank/transactions/" + txId + "/flag-no-receipt", {
+          method: "POST",
+        });
+        showFeedback("Opération marquée comme frais bancaires / sans justificatif.");
+        await loadBankTransactions(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    // Événements modale rapprochement
+    document.getElementById("btn-import-bank").addEventListener("click", importBankStatementAction);
+    document.getElementById("btn-refresh-bank").addEventListener("click", () => {
+      if (activeDossierId) loadBankTransactions(activeDossierId);
+    });
+    document.getElementById("bank-filter-status").addEventListener("change", () => {
+      if (activeDossierId) loadBankTransactions(activeDossierId);
+    });
+    document.getElementById("bank-search-input").addEventListener("keyup", (e) => {
+      if (e.key === "Enter" && activeDossierId) loadBankTransactions(activeDossierId);
+    });
+    document.getElementById("bank-reconcile-modal-close").addEventListener("click", () => {
+      document.getElementById("bank-reconcile-modal").classList.add("hidden");
+    });
+    document.getElementById("bank-reconcile-cancel-btn").addEventListener("click", () => {
+      document.getElementById("bank-reconcile-modal").classList.add("hidden");
+    });
+    document.getElementById("bank-reconcile-confirm-btn").addEventListener("click", async () => {
+      if (!currentBankReconcileTx) return;
+      const selectedRadio = document.querySelector('input[name="reconcile-invoice-radio"]:checked');
+      if (!selectedRadio) {
+        showFeedback("Veuillez sélectionner une facture à rapprocher.", true);
+        return;
+      }
+      const invId = selectedRadio.value;
+      const amountVal = parseFloat(document.getElementById("bank-reconcile-allocated-amount").value);
+      if (Number.isNaN(amountVal) || amountVal <= 0) {
+        showFeedback("Veuillez indiquer un montant alloué valide.", true);
+        return;
+      }
+      const allocatedMinor = Math.round(amountVal * 100);
+      await reconcileBankTransactionAction(currentBankReconcileTx.id, invId, allocatedMinor);
+    });
+
+    // =========================================================================
+    // JAVASCRIPT MODULE 6 : CONTRÔLES DÉTERMINISTES & ANOMALIES (§18)
+    // =========================================================================
+    let currentAnomalyToResolve = null;
+
+    function showAnomaliesNoDossierState() {
+      document.getElementById("anomalies-stat-critical").textContent = "-";
+      document.getElementById("anomalies-stat-suspicion").textContent = "-";
+      document.getElementById("anomalies-stat-resolved").textContent = "-";
+      const tbody = document.getElementById("anomalies-tbody");
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--cn-text-secondary);">' +
+        '<div class="cn-state-box cn-state-empty">Veuillez sélectionner un dossier client actif dans la barre supérieure pour exécuter les contrôles comptables.</div></td></tr>';
+    }
+
+    async function loadAnomaliesList(dossierId) {
+      if (!dossierId) {
+        showAnomaliesNoDossierState();
+        return;
+      }
+      const tbody = document.getElementById("anomalies-tbody");
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--cn-text-secondary);"><div class="cn-state-box cn-state-loading">Chargement des anomalies...</div></td></tr>';
+
+      try {
+        const severity = document.getElementById("anomalies-filter-severity").value;
+        const status = document.getElementById("anomalies-filter-status").value;
+
+        let url = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/anomalies";
+        const queryParts = [];
+        if (severity && severity !== "ALL") queryParts.push("severity=" + encodeURIComponent(severity));
+        if (status && status !== "ALL") queryParts.push("status=" + encodeURIComponent(status));
+        if (queryParts.length > 0) url += "?" + queryParts.join("&");
+
+        const data = await apiFetch(url);
+        const anomalies = data.anomalies || [];
+
+        // Compteurs
+        let criticalCount = 0;
+        let suspicionCount = 0;
+        let resolvedCount = 0;
+        anomalies.forEach((a) => {
+          if (a.status === "OPEN" || a.status === "IN_REVIEW") {
+            if (a.isCertainError) criticalCount++;
+            else suspicionCount++;
+          } else {
+            resolvedCount++;
+          }
+        });
+
+        document.getElementById("anomalies-stat-critical").textContent = criticalCount;
+        document.getElementById("anomalies-stat-suspicion").textContent = suspicionCount;
+        document.getElementById("anomalies-stat-resolved").textContent = resolvedCount;
+
+        if (anomalies.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--cn-text-secondary);">' +
+            '<div class="cn-state-box cn-state-empty">Aucune anomalie détectée sur ce dossier. Cliquez sur "Lancer le scan des 10 règles" pour exécuter une analyse complète.</div></td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = "";
+        anomalies.forEach((a) => {
+          const tr = document.createElement("tr");
+
+          let sevBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-border); color:var(--cn-text-secondary);">' + a.severity + '</span>';
+          if (a.isCertainError) {
+            sevBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-danger); color:var(--cn-status-danger); font-weight:700;">⚠ Erreur certaine</span>';
+          } else if (a.severity === "SUSPICION_TO_VERIFY") {
+            sevBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-warning); color:var(--cn-status-warning);">? Suspicion</span>';
+          } else if (a.severity === "WARNING") {
+            sevBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-info); color:var(--cn-status-info);">Alerte</span>';
+          }
+
+          let statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-warning); color:var(--cn-status-warning);">Ouverte</span>';
+          if (a.status === "RESOLVED_BY_CORRECTION") {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-status-success); color:var(--cn-status-success);">✓ Corrigée</span>';
+          } else if (a.status === "DISMISSED_WITH_JUSTIFICATION") {
+            statusBadge = '<span class="status-badge" style="background:var(--cn-bg-app); border:1px solid var(--cn-border); color:var(--cn-text-secondary);">Classée (Faux positif)</span>';
+          }
+
+          let actionCol = '<div style="display:flex; justify-content:flex-end; gap:0.35rem;">';
+          if (a.status === "OPEN" || a.status === "IN_REVIEW") {
+            actionCol += '<button type="button" class="btn-primary btn-sm btn-resolve-anomaly" data-anomaly=\'' + JSON.stringify(a).replace(/'/g, "&#39;") + '\' style="font-size:0.75rem; padding:0.2rem 0.5rem;">Traiter...</button>';
+          } else {
+            actionCol += '<span style="font-size:0.8rem; color:var(--cn-text-secondary);" title="' + (a.resolutionJustification || '') + '">Clôturée</span>';
+          }
+          actionCol += '</div>';
+
+          tr.innerHTML =
+            '<td>' + sevBadge + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.82rem;"><strong>' + a.ruleCode + '</strong></td>' +
+            '<td style="max-width:320px;">' + a.message + (a.resolutionJustification ? '<br/><span style="font-size:0.8rem; color:var(--cn-status-success);">Justification : ' + a.resolutionJustification + '</span>' : '') + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.82rem;">' + a.targetEntityType + (a.targetEntityId ? ' (' + a.targetEntityId.slice(0, 8) + '...)' : '') + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.82rem;">' + a.detectedAt.slice(0, 10) + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + actionCol + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        tbody.querySelectorAll(".btn-resolve-anomaly").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const raw = btn.getAttribute("data-anomaly");
+            const anomaly = JSON.parse(raw);
+            openAnomalyResolveModal(anomaly);
+          });
+        });
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--cn-status-danger);"><div class="cn-state-box cn-state-error">Erreur de chargement des anomalies : ' + err.message + '</div></td></tr>';
+      }
+    }
+
+    async function scanAnomaliesAction() {
+      if (!activeDossierId) {
+        showFeedback("Veuillez sélectionner un dossier client actif.", true);
+        return;
+      }
+      const feedbackEl = document.getElementById("anomalies-scan-feedback");
+      feedbackEl.innerHTML = '<span style="color:var(--cn-brand-action);">Scan des 10 règles déterministes en cours...</span>';
+
+      try {
+        const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/anomalies/scan", {
+          method: "POST",
+        });
+        feedbackEl.innerHTML = '<span style="color:var(--cn-status-success); font-weight:600;">' +
+          '✓ Scan terminé : 10 règles analysées (' + res.newAnomaliesCount + ' nouvelles anomalies, ' + res.existingOpenAnomaliesCount + ' déjà enregistrées, ' + res.totalOpenAnomalies + ' au total).' +
+          '</span>';
+        showFeedback("Scan des anomalies terminé.");
+        await loadAnomaliesList(activeDossierId);
+      } catch (err) {
+        feedbackEl.innerHTML = '<span style="color:var(--cn-status-danger);">Erreur lors du scan : ' + err.message + '</span>';
+        showFeedback(err.message, true);
+      }
+    }
+
+    function openAnomalyResolveModal(anomaly) {
+      currentAnomalyToResolve = anomaly;
+      const modal = document.getElementById("anomaly-resolve-modal");
+      const detailsEl = document.getElementById("anomaly-modal-details");
+      const justifInput = document.getElementById("anomaly-resolve-justification");
+      const statusSelect = document.getElementById("anomaly-resolve-status-select");
+
+      detailsEl.innerHTML =
+        '<div style="background:var(--cn-bg-app); padding:0.75rem; border-radius:6px; margin-bottom:0.75rem;">' +
+        '<strong>Règle :</strong> ' + anomaly.ruleCode + '<br/>' +
+        '<strong>Description :</strong> ' + anomaly.message +
+        '</div>';
+
+      justifInput.value = "";
+      statusSelect.value = "RESOLVED_BY_CORRECTION";
+      modal.classList.remove("hidden");
+    }
+
+    async function resolveAnomalyAction(anomalyId, status, justification) {
+      try {
+        await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/anomalies/" + anomalyId + "/resolve", {
+          method: "POST",
+          body: JSON.stringify({
+            resolutionStatus: status,
+            resolutionJustification: justification,
+          }),
+        });
+        showFeedback("Anomalie traitée avec succès.");
+        document.getElementById("anomaly-resolve-modal").classList.add("hidden");
+        await loadAnomaliesList(activeDossierId);
+      } catch (err) {
+        showFeedback(err.message, true);
+      }
+    }
+
+    // Événements modale anomalies
+    document.getElementById("btn-scan-anomalies").addEventListener("click", scanAnomaliesAction);
+    document.getElementById("btn-refresh-anomalies").addEventListener("click", () => {
+      if (activeDossierId) loadAnomaliesList(activeDossierId);
+    });
+    document.getElementById("anomalies-filter-severity").addEventListener("change", () => {
+      if (activeDossierId) loadAnomaliesList(activeDossierId);
+    });
+    document.getElementById("anomalies-filter-status").addEventListener("change", () => {
+      if (activeDossierId) loadAnomaliesList(activeDossierId);
+    });
+    document.getElementById("anomaly-modal-close").addEventListener("click", () => {
+      document.getElementById("anomaly-resolve-modal").classList.add("hidden");
+    });
+    document.getElementById("anomaly-modal-cancel-btn").addEventListener("click", () => {
+      document.getElementById("anomaly-resolve-modal").classList.add("hidden");
+    });
+    document.getElementById("anomaly-modal-confirm-btn").addEventListener("click", async () => {
+      if (!currentAnomalyToResolve) return;
+      const status = document.getElementById("anomaly-resolve-status-select").value;
+      const justif = document.getElementById("anomaly-resolve-justification").value.trim();
+      if (status === "DISMISSED_WITH_JUSTIFICATION" && justif.length < 10) {
+        showFeedback("Une justification d'au moins 10 caractères est obligatoire pour classer un faux positif.", true);
+        return;
+      }
+      await resolveAnomalyAction(currentAnomalyToResolve.id, status, justif);
     });
 
     bootstrapAuthenticatedApp();
