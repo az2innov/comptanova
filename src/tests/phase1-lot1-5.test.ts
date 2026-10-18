@@ -24,6 +24,8 @@ import {
   deleteDraftAccountingEntry,
   getAccountingEntryDetails,
   listAccountingEntries,
+  MAX_MONETARY_MINOR,
+  validateCalendarDate,
 } from "../services/accounting-service.js";
 import { createAppServer, resetRateLimitBucketsForTests } from "../server.js";
 
@@ -1088,5 +1090,176 @@ describe("PHASE 1 — LOT 1.5 : Module 5 — Saisie comptable et journaux", () =
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("12. Contrôles ciblés de clôture Lot 1.5 : Arithmétique safe integer, dates calendaires, dossier archivé et concurrence", async () => {
+    // 12.1 Arithmétique : Rejet des flottants, NaN, montants non entiers et dépassement de capacité
+    assert.throws(
+      () => {
+        createAccountingEntry({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          journalCode: "VE",
+          entryDate: "2026-10-18",
+          pieceNumber: "FAC-ARITH-FLOAT",
+          label: "Test rejet flottant",
+          lines: [
+            { generalAccountCode: "411000", label: "Client", debitMinor: 100.5, creditMinor: 0 },
+            { generalAccountCode: "706000", label: "Prestation", debitMinor: 0, creditMinor: 100.5 },
+          ],
+          db,
+        });
+      },
+      /entiers positifs ou nuls/,
+      "Les montants non entiers (flottants IEEE-754) doivent être strictement rejetés"
+    );
+
+    assert.throws(
+      () => {
+        createAccountingEntry({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          journalCode: "VE",
+          entryDate: "2026-10-18",
+          pieceNumber: "FAC-ARITH-OVERFLOW",
+          label: "Test rejet overflow",
+          lines: [
+            { generalAccountCode: "411000", label: "Client", debitMinor: MAX_MONETARY_MINOR + 1, creditMinor: 0 },
+            { generalAccountCode: "706000", label: "Prestation", debitMinor: 0, creditMinor: MAX_MONETARY_MINOR + 1 },
+          ],
+          db,
+        });
+      },
+      /dépasse la capacité monétaire autorisée/,
+      "Les montants dépassant MAX_MONETARY_MINOR doivent être rejetés"
+    );
+
+    // 12.2 Dates calendaires : Rejet des dates invalides (ex: 31 février, mois 13)
+    assert.throws(
+      () => {
+        validateCalendarDate("2026-02-31", "Date test");
+      },
+      /pas une date calendaire valide/,
+      "Le 31 février doit être rejeté"
+    );
+
+    assert.throws(
+      () => {
+        validateCalendarDate("2026-13-01", "Date test");
+      },
+      /valeurs d'année, mois ou jour invalides/,
+      "Le mois 13 doit être rejeté"
+    );
+
+    // Validation d'une année bissextile valide (2024-02-29) vs non bissextile (2025-02-29)
+    assert.equal(validateCalendarDate("2024-02-29", "Date bissextile"), "2024-02-29");
+    assert.throws(
+      () => validateCalendarDate("2025-02-29", "Date non-bissextile"),
+      /pas une date calendaire valide/
+    );
+
+    // 12.3 Blocage des opérations sur dossier archivé (is_active = 0)
+    const archivedDossier = createClientDossier({
+      session: firmAdmin,
+      organizationId: orgAId,
+      code: "DOSS-ARCH-TEST",
+      name: "Dossier Test Archivé",
+      countryCode: "FR",
+      currency: "EUR",
+      taxRegimeCode: "FR_TVA_REEL_NORMAL",
+      db,
+    });
+    db.prepare("UPDATE client_dossiers SET is_active = 0 WHERE id = ?").run(archivedDossier.id);
+
+    assert.throws(
+      () => {
+        createAccountingEntry({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: archivedDossier.id,
+          journalCode: "VE",
+          entryDate: "2026-10-18",
+          pieceNumber: "FAC-ARCH-TEST",
+          label: "Test dossier inactif",
+          lines: [
+            { generalAccountCode: "411000", label: "Client", debitMinor: 1000, creditMinor: 0 },
+            { generalAccountCode: "706000", label: "Vente", debitMinor: 0, creditMinor: 1000 },
+          ],
+          db,
+        });
+      },
+      /archivé ou inactif/,
+      "La création d'écriture doit être rejetée sur un dossier archivé"
+    );
+
+    // 12.4 Concurrence & Verrouillage optimiste sur la validation
+    const concEntry = createAccountingEntry({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      journalCode: "OD",
+      entryDate: "2026-10-18",
+      pieceNumber: "OD-CONC-01",
+      label: "Test verrou optimiste concurrence",
+      lines: [
+        { generalAccountCode: "411000", label: "Client", debitMinor: 5000, creditMinor: 0 },
+        { generalAccountCode: "706000", label: "Prestation", debitMinor: 0, creditMinor: 5000 },
+      ],
+      db,
+    });
+
+    // Validation première réussie
+    const validatedConc = validateAccountingEntry({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      entryId: concEntry.id,
+      db,
+    });
+    assert.equal(validatedConc.status, "VALIDATED");
+
+    // Tentative de double validation concurrente (doit échouer proprement sans écrasement)
+    assert.throws(
+      () => {
+        validateAccountingEntry({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          entryId: concEntry.id,
+          db,
+        });
+      },
+      /déjà validée/,
+      "Une validation concurrente ou répétée doit être rejetée"
+    );
+
+    // Extourne
+    const reversedConc = reverseAccountingEntry({
+      session: firmAdmin,
+      organizationId: orgAId,
+      dossierId: dossierA.id,
+      entryId: concEntry.id,
+      reversalReason: "Annulation pour test concurrence",
+      db,
+    });
+    assert.equal(reversedConc.status, "VALIDATED");
+    assert.equal(reversedConc.reversalOfEntryId, concEntry.id);
+
+    // Tentative de ré-extourne concurrente
+    assert.throws(
+      () => {
+        reverseAccountingEntry({
+          session: firmAdmin,
+          organizationId: orgAId,
+          dossierId: dossierA.id,
+          entryId: concEntry.id,
+          db,
+        });
+      },
+      /(Seule une écriture validée|déjà fait l'objet d'une extourne)/,
+      "Une double extourne doit être strictement bloquée"
+    );
   });
 });

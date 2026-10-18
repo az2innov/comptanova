@@ -22,7 +22,10 @@ function resolveActorRole(
  *
  * Principes stricts de conformité comptable française et internationale :
  * 1. Partie double stricte : Au moins 2 lignes par écriture, Total Débit === Total Crédit en unités mineures (centimes).
- * 2. Arithmétique monétaire exacte : Entiers stricts sans flottants IEEE-754.
+ * 2. Arithmétique monétaire exacte : En JavaScript, tous les nombres primitifs étant représentés en double précision
+ *    IEEE-754 (flottants 64 bits), ComptaNova garantit une exactitude arithmétique absolue en opérant exclusivement
+ *    sur des entiers stricts (unités mineures/centimes) validés systématiquement par Number.isSafeInteger(),
+ *    avec rejet strict des dépassements de capacité au-delà de 100 milliards d'unités mineures.
  * 3. Plan de comptes du dossier : Contrôle d'existence et d'éligibilité des comptes généraux (PCG ANC).
  * 4. 5 Journaux standards français : VE (Ventes), AC (Achats), BQ (Banque), OD (Opérations Diverses), AN (À-Nouveaux).
  * 5. Cycle de vie contrôlé : DRAFT / AI_SUGGESTION -> VALIDATED (humaine) -> EXPORTED / REVERSED.
@@ -30,6 +33,34 @@ function resolveActorRole(
  * 7. Procédure d'extourne (Reversal) : Génération d'une contre-passation symétrique inversée avec traçabilité bidirectionnelle.
  * 8. Isolation Multi-Tenant absolue et permissions RBAC explicites (VALIDATE_ACCOUNTING).
  */
+
+export const MAX_MONETARY_MINOR = 10_000_000_000_000; // 100 milliards d'unités mineures (10^13 < Number.MAX_SAFE_INTEGER = 9*10^15)
+
+/**
+ * Valide rigoureusement une date calendaire au format AAAA-MM-JJ (ex: 2026-10-18).
+ * Vérifie le format, les plages valides et la validité calendaire réelle (années bissextiles, jours par mois).
+ */
+export function validateCalendarDate(dateStr: string, fieldName = "La date d'écriture"): string {
+  const clean = (dateStr || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    throw new Error(`${fieldName} doit être au format AAAA-MM-JJ (ex: 2026-10-18).`);
+  }
+  const [yearStr, monthStr, dayStr] = clean.split("-");
+  const year = parseInt(yearStr!, 10);
+  const month = parseInt(monthStr!, 10);
+  const day = parseInt(dayStr!, 10);
+
+  if (year < 1970 || year > 2099 || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(`${fieldName} comporte des valeurs d'année, mois ou jour invalides.`);
+  }
+
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    throw new Error(`${fieldName} n'est pas une date calendaire valide.`);
+  }
+
+  return clean;
+}
 
 export interface AccountingEntryLineInput {
   lineNumber?: number;
@@ -339,6 +370,12 @@ function validateAccountingEntryLines(
       );
     }
 
+    if (debitMinor > MAX_MONETARY_MINOR || creditMinor > MAX_MONETARY_MINOR) {
+      throw new Error(
+        `Ligne ${lineNumber} : Le montant dépasse la capacité monétaire autorisée (${MAX_MONETARY_MINOR} centimes).`
+      );
+    }
+
     if (debitMinor > 0 && creditMinor > 0) {
       throw new Error(
         `Ligne ${lineNumber} : Une ligne ne peut pas porter simultanément un débit et un crédit non nuls.`
@@ -353,6 +390,17 @@ function validateAccountingEntryLines(
 
     totalDebitMinor += debitMinor;
     totalCreditMinor += creditMinor;
+
+    if (
+      !Number.isSafeInteger(totalDebitMinor) ||
+      !Number.isSafeInteger(totalCreditMinor) ||
+      totalDebitMinor > MAX_MONETARY_MINOR ||
+      totalCreditMinor > MAX_MONETARY_MINOR
+    ) {
+      throw new Error(
+        "Dépassement de capacité arithmétique sur le total débit/crédit de l'écriture comptable."
+      );
+    }
 
     normalizedLines.push({
       lineNumber,
@@ -389,10 +437,10 @@ export function createAccountingEntry(params: CreateAccountingEntryParams): Acco
 
   const dossierRow = db
     .prepare(
-      `SELECT id, currency, country_config_version_id FROM client_dossiers WHERE id = ? AND organization_id = ?`
+      `SELECT id, currency, country_config_version_id, is_active FROM client_dossiers WHERE id = ? AND organization_id = ?`
     )
     .get(params.dossierId, params.organizationId) as
-    | { id: string; currency: string; country_config_version_id: string }
+    | { id: string; currency: string; country_config_version_id: string; is_active: number }
     | undefined;
 
   if (!dossierRow) {
@@ -400,6 +448,10 @@ export function createAccountingEntry(params: CreateAccountingEntryParams): Acco
       "Dossier client introuvable dans cette organisation.",
       404
     );
+  }
+
+  if (Number(dossierRow.is_active) !== 1) {
+    throw new Error("Opération impossible : le dossier client est archivé ou inactif.");
   }
 
   const cleanJournal = (params.journalCode || "").trim().toUpperCase();
@@ -429,10 +481,7 @@ export function createAccountingEntry(params: CreateAccountingEntryParams): Acco
     throw new Error("Le libellé de l'écriture comptable est obligatoire.");
   }
 
-  const cleanEntryDate = (params.entryDate || "").trim();
-  if (!cleanEntryDate || !/^\d{4}-\d{2}-\d{2}$/.test(cleanEntryDate)) {
-    throw new Error("La date d'écriture doit être au format AAAA-MM-JJ (ex: 2026-10-18).");
-  }
+  const cleanEntryDate = validateCalendarDate(params.entryDate, "La date d'écriture");
 
   // Récupérer le set des comptes du dossier
   const accountRows = db
@@ -564,6 +613,23 @@ export function updateDraftAccountingEntry(
     db,
   });
 
+  const dossierRow = db
+    .prepare(
+      `SELECT id, is_active FROM client_dossiers WHERE id = ? AND organization_id = ?`
+    )
+    .get(params.dossierId, params.organizationId) as { id: string; is_active: number } | undefined;
+
+  if (!dossierRow) {
+    throw new AuthorizationError(
+      "Dossier client introuvable dans cette organisation.",
+      404
+    );
+  }
+
+  if (Number(dossierRow.is_active) !== 1) {
+    throw new Error("Opération impossible : le dossier client est archivé ou inactif.");
+  }
+
   const existing = db
     .prepare(
       `SELECT * FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ?`
@@ -587,15 +653,12 @@ export function updateDraftAccountingEntry(
   }
 
   const journalCode = (params.journalCode || String(existing.journal_code)).trim().toUpperCase();
-  const entryDate = (params.entryDate || String(existing.entry_date)).trim();
+  const entryDate = validateCalendarDate(params.entryDate || String(existing.entry_date), "La date d'écriture");
   const pieceNumber = (params.pieceNumber || String(existing.piece_number)).trim();
   const label = (params.label || String(existing.label)).trim();
   const currency = (params.currency || String(existing.currency)).trim().toUpperCase();
 
   if (!journalCode) throw new Error("Le code journal est obligatoire.");
-  if (!entryDate || !/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
-    throw new Error("La date d'écriture doit être au format AAAA-MM-JJ.");
-  }
   if (!pieceNumber) throw new Error("Le numéro de pièce est obligatoire.");
   if (!label) throw new Error("Le libellé de l'écriture est obligatoire.");
 
@@ -724,6 +787,23 @@ export function validateAccountingEntry(
     db,
   });
 
+  const dossierRow = db
+    .prepare(
+      `SELECT id, is_active FROM client_dossiers WHERE id = ? AND organization_id = ?`
+    )
+    .get(params.dossierId, params.organizationId) as { id: string; is_active: number } | undefined;
+
+  if (!dossierRow) {
+    throw new AuthorizationError(
+      "Dossier client introuvable dans cette organisation.",
+      404
+    );
+  }
+
+  if (Number(dossierRow.is_active) !== 1) {
+    throw new Error("Opération impossible : le dossier client est archivé ou inactif.");
+  }
+
   const existing = db
     .prepare(
       `SELECT * FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ?`
@@ -746,6 +826,9 @@ export function validateAccountingEntry(
   if (currentStatus === "REVERSED") {
     throw new Error("Une écriture comptable extournée ne peut plus être validée.");
   }
+  if (currentStatus === "EXPORTED") {
+    throw new Error("Une écriture comptable exportée ne peut plus être modifiée ni re-validée.");
+  }
 
   const lines = db
     .prepare(
@@ -762,8 +845,16 @@ export function validateAccountingEntry(
   let totalDebit = 0;
   let totalCredit = 0;
   for (const l of lines) {
-    totalDebit += Number(l.debit_minor);
-    totalCredit += Number(l.credit_minor);
+    const d = Number(l.debit_minor);
+    const c = Number(l.credit_minor);
+    if (!Number.isSafeInteger(d) || !Number.isSafeInteger(c) || d < 0 || c < 0 || d > MAX_MONETARY_MINOR || c > MAX_MONETARY_MINOR) {
+      throw new Error("Montant de ligne comptable invalide ou hors limites de capacité.");
+    }
+    totalDebit += d;
+    totalCredit += c;
+    if (!Number.isSafeInteger(totalDebit) || !Number.isSafeInteger(totalCredit) || totalDebit > MAX_MONETARY_MINOR || totalCredit > MAX_MONETARY_MINOR) {
+      throw new Error("Dépassement de capacité arithmétique lors de la sommation de l'écriture comptable.");
+    }
   }
 
   if (totalDebit !== totalCredit || totalDebit <= 0) {
@@ -775,21 +866,34 @@ export function validateAccountingEntry(
   const now = new Date().toISOString();
   const userId = params.session ? params.session.user.id : "system-user";
 
-  db.prepare(
-    `UPDATE accounting_entries
-     SET status = 'VALIDATED', validated_by_user_id = ?, validated_at = ?,
-         total_debit_minor = ?, total_credit_minor = ?, updated_at = ?
-     WHERE id = ? AND organization_id = ? AND dossier_id = ?`
-  ).run(
-    userId,
-    now,
-    totalDebit,
-    totalCredit,
-    now,
-    params.entryId,
-    params.organizationId,
-    params.dossierId
-  );
+  db.exec("BEGIN TRANSACTION;");
+  try {
+    const updateResult = db.prepare(
+      `UPDATE accounting_entries
+       SET status = 'VALIDATED', validated_by_user_id = ?, validated_at = ?,
+           total_debit_minor = ?, total_credit_minor = ?, updated_at = ?
+       WHERE id = ? AND organization_id = ? AND dossier_id = ? AND status IN ('DRAFT', 'AI_SUGGESTION')`
+    ).run(
+      userId,
+      now,
+      totalDebit,
+      totalCredit,
+      now,
+      params.entryId,
+      params.organizationId,
+      params.dossierId
+    );
+
+    if (Number(updateResult.changes) === 0) {
+      throw new Error(
+        "Validation impossible : l'écriture a été modifiée par une requête concurrente ou n'est plus au statut brouillon."
+      );
+    }
+    db.exec("COMMIT;");
+  } catch (err) {
+    db.exec("ROLLBACK;");
+    throw err;
+  }
 
   recordAuditLog(
     {
@@ -842,6 +946,23 @@ export function reverseAccountingEntry(
     db,
   });
 
+  const dossierRow = db
+    .prepare(
+      `SELECT id, is_active FROM client_dossiers WHERE id = ? AND organization_id = ?`
+    )
+    .get(params.dossierId, params.organizationId) as { id: string; is_active: number } | undefined;
+
+  if (!dossierRow) {
+    throw new AuthorizationError(
+      "Dossier client introuvable dans cette organisation.",
+      404
+    );
+  }
+
+  if (Number(dossierRow.is_active) !== 1) {
+    throw new Error("Opération impossible : le dossier client est archivé ou inactif.");
+  }
+
   const existing = db
     .prepare(
       `SELECT * FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ?`
@@ -887,9 +1008,15 @@ export function reverseAccountingEntry(
     throw new Error("L'écriture d'origine ne possède pas le nombre minimal de lignes (2).");
   }
 
+  const totCredit = Number(existing.total_credit_minor);
+  const totDebit = Number(existing.total_debit_minor);
+  if (!Number.isSafeInteger(totCredit) || !Number.isSafeInteger(totDebit) || totCredit <= 0 || totDebit <= 0) {
+    throw new Error("Montants totaux d'écriture invalides pour l'extourne.");
+  }
+
   const reversalId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const reversalDate = params.reversalDate || now.slice(0, 10);
+  const reversalDate = validateCalendarDate(params.reversalDate || now.slice(0, 10), "La date d'extourne");
   const userId = params.session ? params.session.user.id : "system-user";
   const origPieceNumber = String(existing.piece_number);
   const reversalPieceNumber = origPieceNumber.startsWith("EXT-")
@@ -899,12 +1026,18 @@ export function reverseAccountingEntry(
 
   db.exec("BEGIN TRANSACTION;");
   try {
-    // 1. Marquer l'écriture originale comme REVERSED
-    db.prepare(
+    // 1. Marquer l'écriture originale comme REVERSED avec verrou optimiste sur VALIDATED
+    const updateResult = db.prepare(
       `UPDATE accounting_entries
        SET status = 'REVERSED', updated_at = ?
-       WHERE id = ? AND organization_id = ? AND dossier_id = ?`
+       WHERE id = ? AND organization_id = ? AND dossier_id = ? AND status = 'VALIDATED'`
     ).run(now, params.entryId, params.organizationId, params.dossierId);
+
+    if (Number(updateResult.changes) === 0) {
+      throw new Error(
+        "Extourne impossible : l'écriture d'origine a été modifiée par une requête concurrente ou n'est plus au statut VALIDATED."
+      );
+    }
 
     // 2. Créer la nouvelle écriture d'extourne (directement validée et liée)
     db.prepare(
@@ -925,8 +1058,8 @@ export function reverseAccountingEntry(
       reversalLabel,
       String(existing.currency),
       Number(existing.currency_minor_unit_exponent ?? 2),
-      Number(existing.total_credit_minor), // Inversé
-      Number(existing.total_debit_minor),  // Inversé
+      totCredit, // Inversé
+      totDebit,  // Inversé
       existing.document_id ? String(existing.document_id) : null,
       String(existing.rule_version_id),
       userId,
@@ -948,6 +1081,12 @@ export function reverseAccountingEntry(
     );
 
     for (const l of originalLines) {
+      const lineCredit = Number(l.credit_minor);
+      const lineDebit = Number(l.debit_minor);
+      if (!Number.isSafeInteger(lineCredit) || !Number.isSafeInteger(lineDebit)) {
+        throw new Error("Montants de ligne invalides pour l'extourne.");
+      }
+
       insertLineStmt.run(
         crypto.randomUUID(),
         params.organizationId,
@@ -958,8 +1097,8 @@ export function reverseAccountingEntry(
         l.auxiliary_account_code ? String(l.auxiliary_account_code) : null,
         l.third_party_id ? String(l.third_party_id) : null,
         `Extourne : ${String(l.label)}`,
-        Number(l.credit_minor), // Le crédit devient débit
-        Number(l.debit_minor),  // Le débit devient crédit
+        lineCredit, // Le crédit devient débit
+        lineDebit,  // Le débit devient crédit
         String(l.currency),
         now
       );
@@ -1018,6 +1157,23 @@ export function deleteDraftAccountingEntry(params: DeleteDraftAccountingEntryPar
     db,
   });
 
+  const dossierRow = db
+    .prepare(
+      `SELECT id, is_active FROM client_dossiers WHERE id = ? AND organization_id = ?`
+    )
+    .get(params.dossierId, params.organizationId) as { id: string; is_active: number } | undefined;
+
+  if (!dossierRow) {
+    throw new AuthorizationError(
+      "Dossier client introuvable dans cette organisation.",
+      404
+    );
+  }
+
+  if (Number(dossierRow.is_active) !== 1) {
+    throw new Error("Opération impossible : le dossier client est archivé ou inactif.");
+  }
+
   const existing = db
     .prepare(
       `SELECT id, status, piece_number FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ?`
@@ -1043,10 +1199,17 @@ export function deleteDraftAccountingEntry(params: DeleteDraftAccountingEntryPar
 
   db.exec("BEGIN TRANSACTION;");
   try {
-    db.prepare(`DELETE FROM accounting_entry_lines WHERE entry_id = ?`).run(params.entryId);
-    db.prepare(
-      `DELETE FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ?`
+    const delResult = db.prepare(
+      `DELETE FROM accounting_entries WHERE id = ? AND organization_id = ? AND dossier_id = ? AND status IN ('DRAFT', 'AI_SUGGESTION')`
     ).run(params.entryId, params.organizationId, params.dossierId);
+
+    if (Number(delResult.changes) === 0) {
+      throw new Error(
+        "Suppression impossible : l'écriture a été modifiée ou validée par une requête concurrente."
+      );
+    }
+
+    db.prepare(`DELETE FROM accounting_entry_lines WHERE entry_id = ?`).run(params.entryId);
     db.exec("COMMIT;");
   } catch (err) {
     db.exec("ROLLBACK;");

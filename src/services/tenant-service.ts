@@ -2627,16 +2627,16 @@ export async function deleteDocument(params: {
     throw new Error(`Document introuvable : ${params.documentId}`);
   }
 
-  // Vérifier qu'aucune écriture validée ou exportée n'y est rattachée
+  // Vérifier qu'aucune écriture validée, extournée ou exportée n'y est rattachée
   const validatedEntry = db
     .prepare(
-      "SELECT id FROM accounting_entries WHERE document_id = ? AND status IN ('VALIDATED', 'EXPORTED')"
+      "SELECT id FROM accounting_entries WHERE document_id = ? AND status IN ('VALIDATED', 'EXPORTED', 'REVERSED')"
     )
     .get(params.documentId) as { id: string } | undefined;
 
   if (validatedEntry) {
     throw new Error(
-      "Impossible de supprimer un document rattaché à une écriture comptable validée ou exportée."
+      "Impossible de supprimer un document rattaché à une écriture comptable validée, extournée ou exportée."
     );
   }
 
