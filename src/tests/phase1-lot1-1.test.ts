@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import { AddressInfo } from "node:net";
 import { createDatabaseConnection, runMigrations } from "../db/database.js";
 import { seedDemoData } from "../db/seed.js";
@@ -127,6 +128,13 @@ describe("PHASE 1 — LOT 1.1 : Design System (§5), Navigation 10 entrées (§8
       htmlFr.includes("BLOQUÉ PAR UNE VALIDATION EXTERNE"),
       "La réserve réglementaire sur la TVA, les barèmes sociaux, les mentions de facturation et le FEC doit être affichée"
     );
+
+    // Validation syntaxique rigoureuse du script JavaScript injecté côté client
+    const scriptMatch = htmlFr.match(/<script>([\s\S]*?)<\/script>/);
+    assert.ok(scriptMatch, "Le code HTML doit contenir un bloc <script>");
+    assert.doesNotThrow(() => {
+      new vm.Script(scriptMatch[1]!);
+    }, "Le script JavaScript injecté dans le client ne doit comporter aucune erreur de syntaxe");
   });
 
   it("3. Initialisation strictement idempotente du Plan Comptable Français (PCG) et des journaux standards", () => {

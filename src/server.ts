@@ -250,6 +250,10 @@ export function createAppServer(
     const parsedUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     const pathname = parsedUrl.pathname;
 
+    if (process.env.NODE_ENV !== "test") {
+      console.log(`[HTTP] ${new Date().toISOString().substring(11, 19)} ${method} ${pathname}`);
+    }
+
     try {
       // 1. Interface Web initiale avec prise en charge de la langue et de la direction RTL/LTR
       if (method === "GET" && pathname === "/") {

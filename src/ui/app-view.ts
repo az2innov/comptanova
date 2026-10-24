@@ -2989,7 +2989,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           dupAlert.classList.remove("hidden");
           document.getElementById("doc-detail-duplicate-desc").textContent =
             "Ce document présente une forte concordance avec une pièce déjà importée (ID: " + selectedDocument.heuristicDuplicateOfId + ")." +
-            (selectedDocument.overrideDuplicateReason ? " Dérogation accordée : \"" + selectedDocument.overrideDuplicateReason + "\"" : "");
+            (selectedDocument.overrideDuplicateReason ? ' Dérogation accordée : "' + selectedDocument.overrideDuplicateReason + '"' : "");
         } else {
           dupAlert.classList.add("hidden");
         }
@@ -3921,7 +3921,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           '<div><strong>Créée par :</strong> ' + (e.createdByName || "Système") + '</div>' +
           '<div><strong>Validée par :</strong> ' + (e.validatedByName || "Non validée") + '</div>' +
           '<div><strong>Horodatage validation :</strong> ' + (e.validatedAt ? new Date(e.validatedAt).toLocaleString("fr-FR") : "-") + '</div>' +
-          (e.reversalOfEntryId ? '<div style="grid-column:1/-1; color:var(--cn-warning);"><strong>Contre-passation :</strong> Cette écriture est l\'extourne de la pièce ' + e.reversalOfEntryId + '</div>' : '');
+          (e.reversalOfEntryId ? '<div style="grid-column:1/-1; color:var(--cn-warning);"><strong>Contre-passation :</strong> Cette écriture est l’extourne de la pièce ' + e.reversalOfEntryId + '</div>' : '');
 
         const linesTbody = document.getElementById("entry-modal-lines-tbody");
         linesTbody.innerHTML = "";
@@ -4071,7 +4071,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
               actionCol += '<button type="button" class="btn-primary btn-sm btn-confirm-match" data-txid="' + t.id + '" data-invid="' + t.suggestedMatch.invoiceId + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">✓ Valider</button>';
               actionCol += '<button type="button" class="btn-secondary btn-sm btn-reject-match" data-txid="' + t.id + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">Rejeter</button>';
             }
-            actionCol += '<button type="button" class="btn-secondary btn-sm btn-manual-reconcile" data-tx=\'' + JSON.stringify(t).replace(/'/g, "&#39;") + '\' style="font-size:0.75rem; padding:0.2rem 0.5rem;">Rapprocher...</button>';
+            actionCol += '<button type="button" class="btn-secondary btn-sm btn-manual-reconcile" data-tx="' + JSON.stringify(t).replace(/"/g, "&quot;") + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">Rapprocher...</button>';
             if (t.reconciliationStatus !== "BANK_FEE_OR_NO_RECEIPT_FLAGGED") {
               actionCol += '<button type="button" class="btn-secondary btn-sm btn-flag-no-receipt" data-txid="' + t.id + '" style="font-size:0.75rem; padding:0.2rem 0.5rem; color:var(--cn-text-secondary);">Frais</button>';
             }
@@ -4162,7 +4162,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
             showFeedback("Relevé bancaire importé avec succès.");
             await loadBankTransactions(activeDossierId);
           } catch (err) {
-            feedbackEl.innerHTML = '<span style="color:var(--cn-status-danger); font-weight:600;">Erreur lors de l\'import : ' + err.message + '</span>';
+            feedbackEl.innerHTML = '<span style="color:var(--cn-status-danger); font-weight:600;">Erreur lors de l’import : ' + err.message + '</span>';
             showFeedback(err.message, true);
           }
         };
@@ -4396,7 +4396,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
           let actionCol = '<div style="display:flex; justify-content:flex-end; gap:0.35rem;">';
           if (a.status === "OPEN" || a.status === "IN_REVIEW") {
-            actionCol += '<button type="button" class="btn-primary btn-sm btn-resolve-anomaly" data-anomaly=\'' + JSON.stringify(a).replace(/'/g, "&#39;") + '\' style="font-size:0.75rem; padding:0.2rem 0.5rem;">Traiter...</button>';
+            actionCol += '<button type="button" class="btn-primary btn-sm btn-resolve-anomaly" data-anomaly="' + JSON.stringify(a).replace(/"/g, "&quot;") + '" style="font-size:0.75rem; padding:0.2rem 0.5rem;">Traiter...</button>';
           } else {
             actionCol += '<span style="font-size:0.8rem; color:var(--cn-text-secondary);" title="' + (a.resolutionJustification || '') + '">Clôturée</span>';
           }
@@ -4545,7 +4545,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           '</div>' +
           '<div style="display:flex; align-items:center; gap:0.5rem; margin-top:1.5rem;">' +
           '<input type="checkbox" id="sim-tax-pme" checked />' +
-          '<label for="sim-tax-pme" style="margin:0; font-size:0.9rem;">Éligible au taux réduit PME (15 % jusqu\'à 42 500 €)</label>' +
+          '<label for="sim-tax-pme" style="margin:0; font-size:0.9rem;">Éligible au taux réduit PME (15 % jusqu’à 42 500 €)</label>' +
           '</div>';
       } else if (simType === "EXPENSE_IMPACT") {
         title.textContent = "Paramètres de la simulation Impact d'une Dépense";
@@ -4564,7 +4564,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           '</select>' +
           '</div>' +
           '<div>' +
-          '<label for="sim-exp-tax-rate">Taux d\'IS marginal applicable (%)</label>' +
+          '<label for="sim-exp-tax-rate">Taux d’IS marginal applicable (%)</label>' +
           '<select id="sim-exp-tax-rate">' +
           '<option value="2500" selected>25,0 % (Taux normal IS)</option>' +
           '<option value="1500">15,0 % (Taux réduit PME)</option>' +
