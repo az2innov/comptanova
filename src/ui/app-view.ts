@@ -1729,22 +1729,31 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         </div>
 
         <div class="card">
-          <h3>Paramètres de la plateforme &amp; Piste d'Audit SHA-256</h3>
-          <div id="settings-summary" style="font-size:0.9rem; margin-bottom:1rem;"></div>
-          <h4>Journal d'audit inaltérable (Chaînage cryptographique SHA-256)</h4>
-          <div class="table-responsive">
-            <table>
-              <thead>
-                <tr>
-                  <th>Horodatage</th>
-                  <th>Rôle Acteur</th>
-                  <th>Action</th>
-                  <th>Cible</th>
-                  <th>Empreinte SHA-256 (tronquée)</th>
-                </tr>
-              </thead>
-              <tbody id="audit-tbody"></tbody>
-            </table>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.75rem;">
+            <div>
+              <h3 style="margin:0;">Paramètres de la plateforme &amp; Piste d'Audit SHA-256</h3>
+              <div id="settings-summary" style="font-size:0.9rem; margin-top:0.35rem;"></div>
+            </div>
+            <button type="button" id="toggle-audit-btn" class="btn-secondary" style="font-size:0.82rem; padding:0.35rem 0.85rem;" onclick="toggleAuditLogSection()">
+              🔽 Masquer le journal
+            </button>
+          </div>
+          <div id="audit-table-container">
+            <h4 style="margin-top:0.75rem; margin-bottom:0.5rem;">Journal d'audit inaltérable (Chaînage cryptographique SHA-256)</h4>
+            <div class="table-responsive" style="max-height: 480px; overflow-y: auto; border: 1px solid var(--cn-border); border-radius: var(--cn-radius-md);">
+              <table>
+                <thead style="position: sticky; top: 0; background: var(--cn-bg-surface); z-index: 2;">
+                  <tr>
+                    <th>Horodatage</th>
+                    <th>Rôle Acteur</th>
+                    <th>Action</th>
+                    <th>Cible</th>
+                    <th>Empreinte SHA-256 (tronquée)</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-tbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -2273,18 +2282,24 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         try {
           const auditRes = await apiFetch("/api/organizations/" + activeOrgId + "/audit-logs");
           document.getElementById("settings-summary").innerHTML =
-            "<p><strong>Vérification d'intégrité de la chaîne d'audit :</strong> " +
+            "<p style='margin:0;'><strong>Vérification d'intégrité de la chaîne d'audit :</strong> " +
             (auditRes.chainIntegrity.valid
               ? "<span class='badge badge-valid'>INTÈGRE (" + auditRes.chainIntegrity.checkedCount + " blocs SHA-256 vérifiés)</span>"
               : "<span class='badge badge-danger'>RUPTURE DÉTECTÉE</span>") +
             "</p>";
 
-          document.getElementById("audit-tbody").innerHTML = (auditRes.logs || []).map((l) =>
+          const logs = auditRes.logs || [];
+          document.getElementById("audit-tbody").innerHTML = logs.map((l) =>
             "<tr><td class='font-mono-tabular'>" + l.createdAt.replace("T", " ").slice(0, 19) + "</td><td>" + l.actorRole + "</td><td><code>" + l.action + "</code></td><td>" + l.targetEntityType + "</td><td><code class='font-mono-tabular'>" + l.integrityHash.slice(0, 16) + "...</code></td></tr>"
           ).join("");
+
+          const toggleBtn = document.getElementById("toggle-audit-btn");
+          if (toggleBtn && typeof auditLogVisible !== "undefined" && !auditLogVisible) {
+            toggleBtn.textContent = "▶️ Afficher le journal d'audit (" + logs.length + " entrées)";
+          }
         } catch (err) {
           document.getElementById("settings-summary").innerHTML =
-            "<p><span class='badge badge-ai'>Accès restreint RBAC [SEC-OPEN-02]</span> La consultation du journal d'audit complet de l'organisation est réservée aux rôles d'administration (<code>FIRM_ADMIN</code>, <code>CLIENT_DIRECTOR</code> ou <code>PLATFORM_ADMIN</code> justifié).</p>";
+            "<p style='margin:0;'><span class='badge badge-ai'>Accès restreint RBAC [SEC-OPEN-02]</span> La consultation du journal d'audit complet de l'organisation est réservée aux rôles d'administration (<code>FIRM_ADMIN</code>, <code>CLIENT_DIRECTOR</code> ou <code>PLATFORM_ADMIN</code> justifié).</p>";
           document.getElementById("audit-tbody").innerHTML =
             "<tr><td colspan='5' style='color:var(--cn-text-secondary);'>Journal d'audit non accessible pour le rôle courant (" + (err && err.message ? err.message : "403") + ").</td></tr>";
         }
@@ -5310,6 +5325,25 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/exports/fec?decimalSeparator=" + encodeURIComponent(decimalSeparator) + "&closingDate=" + encodeURIComponent(closingDate);
       triggerSecureDownload(url, "export_fec.txt");
     });
+
+    let auditLogVisible = true;
+    function toggleAuditLogSection() {
+      auditLogVisible = !auditLogVisible;
+      const container = document.getElementById("audit-table-container");
+      const btn = document.getElementById("toggle-audit-btn");
+      if (container) {
+        container.style.display = auditLogVisible ? "block" : "none";
+      }
+      if (btn) {
+        const rows = document.querySelectorAll("#audit-tbody tr").length;
+        btn.textContent = auditLogVisible
+          ? "🔽 Masquer le journal"
+          : ("▶️ Afficher le journal d'audit" + (rows > 0 ? " (" + rows + " entrées)" : ""));
+      }
+    }
+    window.toggleAuditLogSection = toggleAuditLogSection;
+
+    document.getElementById("toggle-audit-btn")?.addEventListener("click", toggleAuditLogSection);
 
     bootstrapAuthenticatedApp();
   </script>

@@ -297,6 +297,15 @@ export function buildDesignSystemStylesheet(config: AppConfig = appConfig): stri
       gap: var(--cn-space-4);
     }
 
+    @media (min-width: 768px) {
+      .sidebar {
+        position: sticky;
+        top: 0;
+        max-height: 100vh;
+        overflow-y: auto;
+      }
+    }
+
     .brand-header {
       display: flex;
       align-items: center;
