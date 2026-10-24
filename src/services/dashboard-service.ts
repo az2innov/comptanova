@@ -583,18 +583,21 @@ export function getDossierDashboardMetrics(params: {
 export function getFirmDashboardMetrics(params: {
   session: AuthenticatedSessionContext | null;
   organizationId: string;
+  platformAdminJustification?: string | null;
   db?: DatabaseSync;
 }): FirmDashboardMetrics {
   const db = params.db ?? getDatabase();
   assertOrganizationAccess({
     session: params.session,
     organizationId: params.organizationId,
+    platformAdminJustification: params.platformAdminJustification,
     db,
   });
 
   const org = getOrganizationById({
     session: params.session,
     organizationId: params.organizationId,
+    platformAdminJustification: params.platformAdminJustification,
     db,
   });
 

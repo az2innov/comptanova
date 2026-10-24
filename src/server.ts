@@ -399,6 +399,7 @@ export function createAppServer(
           const metrics = getFirmDashboardMetrics({
             session,
             organizationId: orgId,
+            platformAdminJustification,
             db,
           });
           sendJson(res, 200, metrics);

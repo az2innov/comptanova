@@ -1734,7 +1734,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
               <h3 style="margin:0;">Paramètres de la plateforme &amp; Piste d'Audit SHA-256</h3>
               <div id="settings-summary" style="font-size:0.9rem; margin-top:0.35rem;"></div>
             </div>
-            <button type="button" id="toggle-audit-btn" class="btn-secondary" style="font-size:0.82rem; padding:0.35rem 0.85rem;" onclick="toggleAuditLogSection()">
+            <button type="button" id="toggle-audit-btn" class="btn-secondary" style="font-size:0.82rem; padding:0.35rem 0.85rem;" onclick="(function(){ const c = document.getElementById('audit-table-container'); const b = document.getElementById('toggle-audit-btn'); if(!c) return; const isHidden = c.style.display === 'none'; c.style.display = isHidden ? 'block' : 'none'; if(b) b.textContent = isHidden ? '🔽 Masquer le journal' : '▶️ Afficher le journal d\'audit'; })()">
               🔽 Masquer le journal
             </button>
           </div>
@@ -1901,21 +1901,15 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
     window.auditLogVisible = true;
     function toggleAuditLogSection() {
-      window.auditLogVisible = !window.auditLogVisible;
       const container = document.getElementById("audit-table-container");
       const btn = document.getElementById("toggle-audit-btn");
-      if (container) {
-        if (window.auditLogVisible) {
-          container.classList.remove("hidden");
-          container.style.display = "block";
-        } else {
-          container.classList.add("hidden");
-          container.style.display = "none";
-        }
-      }
+      if (!container) return;
+      const isHidden = container.style.display === "none";
+      container.style.display = isHidden ? "block" : "none";
+      window.auditLogVisible = isHidden;
       if (btn) {
         const rows = document.querySelectorAll("#audit-tbody tr").length;
-        btn.textContent = window.auditLogVisible
+        btn.textContent = isHidden
           ? "🔽 Masquer le journal"
           : ("▶️ Afficher le journal d'audit" + (rows > 0 ? " (" + rows + " entrées)" : ""));
       }
@@ -2272,13 +2266,25 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         updateRbacUiVisibility();
         const d = DICTIONARIES[activeLang] || DICTIONARIES.fr;
 
-        const dash = await apiFetch("/api/organizations/" + activeOrgId + "/dashboard");
-        document.getElementById("active-org-heading").textContent = dash.organization.name;
-        document.getElementById("active-org-meta").textContent =
-          "Slug: " + dash.organization.slug + " | Type: " + dash.organization.organizationType +
-          " | Établissement: " + dash.organization.countryCode +
-          " | Juridiction fiscale: " + (dash.organization.primaryTaxJurisdictionCode || dash.organization.countryCode) +
-          " | Devise: " + dash.organization.defaultCurrency;
+        try {
+          const dash = await apiFetch("/api/organizations/" + activeOrgId + "/dashboard");
+          document.getElementById("active-org-heading").textContent = dash.organization.name;
+          document.getElementById("active-org-meta").textContent =
+            "Slug: " + dash.organization.slug + " | Type: " + dash.organization.organizationType +
+            " | Établissement: " + dash.organization.countryCode +
+            " | Juridiction fiscale: " + (dash.organization.primaryTaxJurisdictionCode || dash.organization.countryCode) +
+            " | Devise: " + dash.organization.defaultCurrency;
+        } catch (dashErr) {
+          const currentOrgObj = accessibleOrgs.find((o) => o.id === activeOrgId);
+          if (currentOrgObj) {
+            document.getElementById("active-org-heading").textContent = currentOrgObj.name;
+            document.getElementById("active-org-meta").textContent =
+              "Slug: " + currentOrgObj.slug + " | Type: " + currentOrgObj.organizationType +
+              " | Établissement: " + currentOrgObj.countryCode +
+              " | Juridiction fiscale: " + (currentOrgObj.primaryTaxJurisdictionCode || currentOrgObj.countryCode) +
+              " | Devise: " + currentOrgObj.defaultCurrency;
+          }
+        }
 
         const dossiersRes = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers");
         cachedDossiers = dossiersRes.dossiers || [];
