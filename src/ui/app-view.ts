@@ -3648,14 +3648,16 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
           const status = inv.invoiceStatus || inv.status || "DRAFT";
           let statusBadge = "";
-          if (status === "FINALIZED") {
+          if (inv.direction === "CREDIT_NOTE") {
+            statusBadge = '<span class="badge badge-ai" style="font-weight:600;">Avoir émis</span>';
+          } else if (status === "FINALIZED") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Finalisée</span>';
           } else if (status === "PAID") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Soldée</span>';
           } else if (status === "PARTIALLY_PAID") {
             statusBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">Partielle</span>';
           } else if (status === "CANCELLED") {
-            statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Avoir</span>';
+            statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Annulée (Avoir)</span>';
           } else {
             statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
           }
@@ -3674,9 +3676,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           if (status === "DRAFT") {
             actionsHtml += '<button type="button" class="btn-primary btn-inv-finalize" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Finaliser</button>';
           }
-          if (status === "FINALIZED" || status === "PARTIALLY_PAID") {
+          if (inv.direction !== "CREDIT_NOTE" && (status === "FINALIZED" || status === "PARTIALLY_PAID")) {
             actionsHtml += '<button type="button" class="btn-primary btn-inv-pay" data-id="' + inv.id + '" data-rem="' + (inv.remainingAmountMinor || 0) + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Régler</button>';
-            actionsHtml += '<button type="button" class="btn-secondary btn-inv-credit-note" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px; color:var(--cn-warning);">Avoir</button>';
+            actionsHtml += '<button type="button" class="btn-secondary btn-inv-credit-note" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" data-gross="' + (inv.grossAmountMinor ? (inv.grossAmountMinor / 100).toFixed(2) : "0.00") + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px; color:var(--cn-warning);">Avoir</button>';
           }
           actionsHtml += '<button type="button" class="btn-secondary btn-inv-print" data-id="' + inv.id + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Imprimer</button>';
           actionsHtml += '<button type="button" class="btn-secondary btn-inv-facturx" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px;">Factur-X</button>';
@@ -3755,12 +3757,43 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           btn.addEventListener("click", async () => {
             const id = btn.getAttribute("data-id");
             const num = btn.getAttribute("data-num");
-            const reason = window.prompt("Motif de l’avoir / annulation pour la facture " + num + " :");
-            if (!reason || !reason.trim()) return;
+            const totalGross = btn.getAttribute("data-gross") || "0.00";
+            const amtStr = window.prompt(
+              "Montant de l'avoir en euros TTC pour la facture " + num + " (Total : " + totalGross + " €) :\n\n- Saisissez le montant partiel souhaité (ex: 200 pour 200 €)\n- Ou laissez vide pour annuler la totalité de la facture (" + totalGross + " €) :",
+              ""
+            );
+            if (amtStr === null) return;
+
+            let partialGrossMinor = undefined;
+            if (amtStr.trim() !== "") {
+              const parsedAmt = parseFloat(amtStr.replace(",", "."));
+              if (isNaN(parsedAmt) || parsedAmt <= 0) {
+                showFeedback("Montant d'avoir invalide.", true);
+                return;
+              }
+              partialGrossMinor = Math.round(parsedAmt * 100);
+            }
+
+            const defaultReason = partialGrossMinor
+              ? "Avoir partiel de " + (partialGrossMinor / 100).toFixed(2) + " € suite accord commercial"
+              : "Annulation et remplacement de la facture " + num;
+
+            const reason = window.prompt(
+              "Motif obligatoire de l'avoir pour " + num + " (min. 5 caractères) :",
+              defaultReason
+            );
+            if (!reason || reason.trim().length < 5) {
+              showFeedback("Le motif de l'avoir est obligatoire (au moins 5 caractères).", true);
+              return;
+            }
+
             try {
               const r = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/credit-note", {
                 method: "POST",
-                body: JSON.stringify({ reason: reason.trim() })
+                body: JSON.stringify({
+                  reason: reason.trim(),
+                  partialGrossAmountMinor: partialGrossMinor
+                })
               });
               showFeedback("Avoir créé avec succès (" + (r.creditNote ? r.creditNote.invoiceNumber : "") + ").");
               await loadSalesInvoices(activeDossierId);
