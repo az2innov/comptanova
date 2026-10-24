@@ -2025,6 +2025,12 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           showDocumentsNoDossierState();
         }
       }
+      if (targetTabId === "tab-invoicing") {
+        if (activeDossierId) {
+          setInvoicingSubtab("invoices");
+          loadSalesInvoices(activeDossierId);
+        }
+      }
       if (targetTabId === "tab-journal") {
         if (activeDossierId) {
           loadAccountingJournals(activeDossierId);
@@ -2082,6 +2088,11 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           await loadDocumentsList(activeDossierId);
         } else {
           showDocumentsNoDossierState();
+        }
+      }
+      if (!document.getElementById("tab-invoicing").classList.contains("hidden")) {
+        if (activeDossierId) {
+          await loadSalesInvoices(activeDossierId);
         }
       }
       if (!document.getElementById("tab-journal").classList.contains("hidden")) {
@@ -3294,6 +3305,506 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     });
 
     document.getElementById("doc-detail-close-btn").addEventListener("click", closeDocumentDetail);
+
+    // =========================================================================
+    // MODULE 4 — FACTURATION DES VENTES, DEVIS & FACTUR-X (Phase 1, Lot 1.4)
+    // =========================================================================
+    let currentSalesStatusFilter = "ALL";
+    let currentQuotesStatusFilter = "ALL";
+
+    function setInvoicingSubtab(tab) {
+      const btnInvoices = document.getElementById("subtab-btn-invoices");
+      const btnQuotes = document.getElementById("subtab-btn-quotes");
+      const btnCreate = document.getElementById("subtab-btn-create");
+      const viewInvoices = document.getElementById("subtab-view-invoices");
+      const viewQuotes = document.getElementById("subtab-view-quotes");
+      const viewCreate = document.getElementById("subtab-view-create");
+
+      if (tab === "invoices") {
+        if (btnInvoices) btnInvoices.className = "btn-primary";
+        if (btnQuotes) btnQuotes.className = "btn-secondary";
+        if (btnCreate) btnCreate.className = "btn-secondary";
+        if (viewInvoices) viewInvoices.classList.remove("hidden");
+        if (viewQuotes) viewQuotes.classList.add("hidden");
+        if (viewCreate) viewCreate.classList.add("hidden");
+        if (activeDossierId) loadSalesInvoices(activeDossierId);
+      } else if (tab === "quotes") {
+        if (btnInvoices) btnInvoices.className = "btn-secondary";
+        if (btnQuotes) btnQuotes.className = "btn-primary";
+        if (btnCreate) btnCreate.className = "btn-secondary";
+        if (viewInvoices) viewInvoices.classList.add("hidden");
+        if (viewQuotes) viewQuotes.classList.remove("hidden");
+        if (viewCreate) viewCreate.classList.add("hidden");
+        if (activeDossierId) loadQuotes(activeDossierId);
+      } else if (tab === "create") {
+        if (btnInvoices) btnInvoices.className = "btn-secondary";
+        if (btnQuotes) btnQuotes.className = "btn-secondary";
+        if (btnCreate) btnCreate.className = "btn-primary";
+        if (viewInvoices) viewInvoices.classList.add("hidden");
+        if (viewQuotes) viewQuotes.classList.add("hidden");
+        if (viewCreate) viewCreate.classList.remove("hidden");
+
+        const today = new Date().toISOString().slice(0, 10);
+        const in30Days = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+        const issueInp = document.getElementById("inv-issue-date");
+        const dueInp = document.getElementById("inv-due-date");
+        if (issueInp && !issueInp.value) issueInp.value = today;
+        if (dueInp && !dueInp.value) dueInp.value = in30Days;
+        recalculateInvoicingTotals();
+      }
+    }
+
+    document.getElementById("subtab-btn-invoices")?.addEventListener("click", () => setInvoicingSubtab("invoices"));
+    document.getElementById("subtab-btn-quotes")?.addEventListener("click", () => setInvoicingSubtab("quotes"));
+    document.getElementById("subtab-btn-create")?.addEventListener("click", () => setInvoicingSubtab("create"));
+    document.getElementById("inv-cancel-create-btn")?.addEventListener("click", () => setInvoicingSubtab("invoices"));
+
+    const docTypeSelect = document.getElementById("doc-type-select");
+    if (docTypeSelect) {
+      docTypeSelect.addEventListener("change", (e) => {
+        const isInvoice = e.target.value === "INVOICE";
+        const title = document.getElementById("invoicing-create-title");
+        const submitBtn = document.getElementById("inv-submit-create-btn");
+        if (title) title.textContent = isInvoice ? "Créer une nouvelle facture de vente" : "Créer un nouveau devis client";
+        if (submitBtn) submitBtn.textContent = isInvoice ? "Enregistrer la facture (Brouillon)" : "Enregistrer le devis";
+      });
+    }
+
+    function recalculateInvoicingTotals() {
+      const rows = document.querySelectorAll("#inv-lines-tbody .inv-line-row");
+      let totalHtMinor = 0;
+      let totalVatMinor = 0;
+
+      rows.forEach((row) => {
+        const qty = parseFloat(row.querySelector(".inv-line-qty")?.value || "0") || 0;
+        const pu = parseFloat(row.querySelector(".inv-line-pu")?.value || "0") || 0;
+        const disc = parseFloat(row.querySelector(".inv-line-disc")?.value || "0") || 0;
+        const vatBps = parseInt(row.querySelector(".inv-line-vat")?.value || "2000", 10) || 0;
+
+        const puMinor = Math.round(pu * 100);
+        const qtyMinor = Math.round(qty * 100);
+        const discountRateBps = Math.round(disc * 100);
+
+        const rawMinor = (puMinor * qtyMinor) / 100;
+        const discountMinor = Math.round((rawMinor * discountRateBps) / 10000);
+        const lineNetMinor = Math.round(rawMinor - discountMinor);
+        const lineVatMinor = Math.round((lineNetMinor * vatBps) / 10000);
+
+        totalHtMinor += lineNetMinor;
+        totalVatMinor += lineVatMinor;
+
+        const totalCell = row.querySelector(".inv-line-total");
+        if (totalCell) {
+          totalCell.textContent = (lineNetMinor / 100).toFixed(2) + " €";
+        }
+      });
+
+      const totalTtcMinor = totalHtMinor + totalVatMinor;
+      const sumHt = document.getElementById("inv-summary-ht");
+      const sumVat = document.getElementById("inv-summary-tva");
+      const sumTtc = document.getElementById("inv-summary-ttc");
+      if (sumHt) sumHt.textContent = (totalHtMinor / 100).toFixed(2) + " €";
+      if (sumVat) sumVat.textContent = (totalVatMinor / 100).toFixed(2) + " €";
+      if (sumTtc) sumTtc.textContent = (totalTtcMinor / 100).toFixed(2) + " €";
+    }
+
+    function attachLineRowEvents(row) {
+      row.querySelectorAll("input, select").forEach((inp) => {
+        inp.addEventListener("input", recalculateInvoicingTotals);
+        inp.addEventListener("change", recalculateInvoicingTotals);
+      });
+      const removeBtn = row.querySelector(".btn-remove-line");
+      if (removeBtn) {
+        removeBtn.addEventListener("click", () => {
+          const rows = document.querySelectorAll("#inv-lines-tbody .inv-line-row");
+          if (rows.length > 1) {
+            row.remove();
+            recalculateInvoicingTotals();
+          } else {
+            showFeedback("Une facture ou un devis doit comporter au moins une ligne.", true);
+          }
+        });
+      }
+    }
+
+    document.querySelectorAll("#inv-lines-tbody .inv-line-row").forEach(attachLineRowEvents);
+
+    const addLineBtn = document.getElementById("inv-add-line-btn");
+    if (addLineBtn) {
+      addLineBtn.addEventListener("click", () => {
+        const tbody = document.getElementById("inv-lines-tbody");
+        if (!tbody) return;
+        const tr = document.createElement("tr");
+        tr.className = "inv-line-row";
+        tr.innerHTML = '<td style="padding:6px;"><input class="inv-line-desc" required placeholder="Prestation ou article..." style="width:96%;" /></td>' +
+          '<td style="padding:6px;"><input class="inv-line-qty" type="number" step="0.01" min="0.01" value="1.00" style="width:90%; text-align:right;" /></td>' +
+          '<td style="padding:6px;"><input class="inv-line-pu" type="number" step="0.01" min="0" value="0.00" required style="width:90%; text-align:right;" /></td>' +
+          '<td style="padding:6px;"><input class="inv-line-disc" type="number" step="0.1" min="0" max="100" value="0" style="width:85%; text-align:right;" /></td>' +
+          '<td style="padding:6px;">' +
+            '<select class="inv-line-vat" style="width:95%;">' +
+              '<option value="2000">20.0 %</option>' +
+              '<option value="1000">10.0 %</option>' +
+              '<option value="550">5.5 %</option>' +
+              '<option value="210">2.1 %</option>' +
+              '<option value="0">0.0 % (Exonéré/Franchise)</option>' +
+            '</select>' +
+          '</td>' +
+          '<td style="padding:6px; text-align:right; font-weight:600;" class="inv-line-total">0.00 €</td>' +
+          '<td style="padding:6px; text-align:center;"><button type="button" class="btn-remove-line" style="background:none; border:none; cursor:pointer; color:var(--cn-state-error-text);">✕</button></td>';
+        tbody.appendChild(tr);
+        attachLineRowEvents(tr);
+        recalculateInvoicingTotals();
+      });
+    }
+
+    const invoicingForm = document.getElementById("invoicing-create-form");
+    if (invoicingForm) {
+      invoicingForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!activeOrgId || !activeDossierId) {
+          showFeedback("Veuillez sélectionner une organisation et un dossier client actif.", true);
+          return;
+        }
+
+        const docType = document.getElementById("doc-type-select").value;
+        const clientName = document.getElementById("inv-client-name").value.trim();
+        const clientSiret = document.getElementById("inv-client-siret").value.trim();
+        const clientAddress = document.getElementById("inv-client-address").value.trim();
+        const issueDate = document.getElementById("inv-issue-date").value;
+        const dueDate = document.getElementById("inv-due-date").value;
+
+        const rows = document.querySelectorAll("#inv-lines-tbody .inv-line-row");
+        const lines = [];
+        rows.forEach((row) => {
+          const desc = row.querySelector(".inv-line-desc")?.value.trim() || "";
+          const qty = parseFloat(row.querySelector(".inv-line-qty")?.value || "1") || 1;
+          const pu = parseFloat(row.querySelector(".inv-line-pu")?.value || "0") || 0;
+          const disc = parseFloat(row.querySelector(".inv-line-disc")?.value || "0") || 0;
+          const vatBps = parseInt(row.querySelector(".inv-line-vat")?.value || "2000", 10) || 0;
+
+          lines.push({
+            description: desc,
+            quantityMinor: Math.round(qty * 100),
+            unitPriceNetMinor: Math.round(pu * 100),
+            discountRateBps: Math.round(disc * 100),
+            vatRateBps: vatBps
+          });
+        });
+
+        if (lines.length === 0) {
+          showFeedback("Veuillez renseigner au moins une ligne.", true);
+          return;
+        }
+
+        try {
+          if (docType === "INVOICE") {
+            const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices", {
+              method: "POST",
+              body: JSON.stringify({
+                thirdPartyName: clientName,
+                thirdPartyTaxNumber: clientSiret || undefined,
+                thirdPartyAddress: clientAddress || undefined,
+                issueDate: issueDate,
+                dueDate: dueDate || undefined,
+                lines: lines
+              })
+            });
+            showFeedback("Facture créée avec succès (" + (res.invoice ? res.invoice.invoiceNumber : "") + ").");
+            setInvoicingSubtab("invoices");
+            await loadSalesInvoices(activeDossierId);
+          } else {
+            const res = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/quotes", {
+              method: "POST",
+              body: JSON.stringify({
+                thirdPartyName: clientName,
+                thirdPartyTaxNumber: clientSiret || undefined,
+                thirdPartyAddress: clientAddress || undefined,
+                issueDate: issueDate,
+                validityDate: dueDate,
+                lines: lines
+              })
+            });
+            showFeedback("Devis créé avec succès (" + (res.quote ? res.quote.quoteNumber : "") + ").");
+            setInvoicingSubtab("quotes");
+            await loadQuotes(activeDossierId);
+          }
+        } catch (err) {
+          showFeedback("Erreur lors de la création : " + err.message, true);
+        }
+      });
+    }
+
+    const filterSalesStatusEl = document.getElementById("filter-sales-status");
+    if (filterSalesStatusEl) {
+      filterSalesStatusEl.addEventListener("change", (e) => {
+        currentSalesStatusFilter = e.target.value;
+        if (activeDossierId) loadSalesInvoices(activeDossierId);
+      });
+    }
+
+    const filterQuotesStatusEl = document.getElementById("filter-quotes-status");
+    if (filterQuotesStatusEl) {
+      filterQuotesStatusEl.addEventListener("change", (e) => {
+        currentQuotesStatusFilter = e.target.value;
+        if (activeDossierId) loadQuotes(activeDossierId);
+      });
+    }
+
+    async function loadSalesInvoices(dossierId) {
+      if (!activeOrgId || !dossierId) return;
+      try {
+        let query = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/sales-invoices";
+        if (currentSalesStatusFilter && currentSalesStatusFilter !== "ALL") {
+          query += "?status=" + encodeURIComponent(currentSalesStatusFilter);
+        }
+        const res = await apiFetch(query);
+        const invoices = res.invoices || [];
+        const emptyBox = document.getElementById("sales-invoices-empty");
+        const tbody = document.getElementById("sales-invoices-tbody");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+
+        if (invoices.length === 0) {
+          if (emptyBox) emptyBox.classList.remove("hidden");
+          return;
+        }
+        if (emptyBox) emptyBox.classList.add("hidden");
+
+        invoices.forEach((inv) => {
+          const tr = document.createElement("tr");
+
+          let statusBadge = "";
+          if (inv.status === "FINALIZED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Finalisée</span>';
+          } else if (inv.status === "PAID") {
+            statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Soldée</span>';
+          } else if (inv.status === "PARTIALLY_PAID") {
+            statusBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">Partielle</span>';
+          } else if (inv.status === "CANCELLED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Avoir</span>';
+          } else {
+            statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
+          }
+
+          let paymentBadge = "";
+          if (inv.paymentStatus === "PAID") {
+            paymentBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success);">Réglée</span>';
+          } else if (inv.paymentStatus === "PARTIAL") {
+            paymentBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning);">Partiel</span>';
+          } else {
+            paymentBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary);">Non réglée</span>';
+          }
+
+          let actionsHtml = "";
+          if (inv.status === "DRAFT") {
+            actionsHtml += '<button type="button" class="btn-primary btn-inv-finalize" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Finaliser</button>';
+          }
+          if (inv.status === "FINALIZED" || inv.status === "PARTIALLY_PAID") {
+            actionsHtml += '<button type="button" class="btn-primary btn-inv-pay" data-id="' + inv.id + '" data-rem="' + inv.remainingAmountMinor + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Régler</button>';
+            actionsHtml += '<button type="button" class="btn-secondary btn-inv-credit-note" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px; color:var(--cn-warning);">Avoir</button>';
+          }
+          actionsHtml += '<button type="button" class="btn-secondary btn-inv-print" data-id="' + inv.id + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Imprimer</button>';
+          actionsHtml += '<button type="button" class="btn-secondary btn-inv-facturx" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px;">Factur-X</button>';
+
+          const netFormatted = (inv.totalNetMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const grossFormatted = (inv.totalGrossMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const paidFormatted = (inv.paidAmountMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const remFormatted = (inv.remainingAmountMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+          tr.innerHTML =
+            '<td><strong class="font-mono-tabular" style="font-size:0.85rem;">' + inv.invoiceNumber + '</strong></td>' +
+            '<td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + inv.thirdPartyName + '">' + inv.thirdPartyName + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.85rem;">' + inv.issueDate + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.85rem;">' + (inv.dueDate || "-") + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + netFormatted + ' €</td>' +
+            '<td class="font-mono-tabular" style="text-align:right; font-weight:600;">' + grossFormatted + ' €</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + paidFormatted + ' €</td>' +
+            '<td class="font-mono-tabular" style="text-align:right; font-weight:600;">' + remFormatted + ' €</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + paymentBadge + '</td>' +
+            '<td style="text-align:center; white-space:nowrap;">' + actionsHtml + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        tbody.querySelectorAll(".btn-inv-finalize").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const num = btn.getAttribute("data-num");
+            if (!window.confirm("Confirmez-vous la finalisation de la facture " + num + " ? Cette action génère un numéro officiel définitif et une écriture comptable au journal des ventes (VE).")) return;
+            try {
+              const r = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/finalize", { method: "POST" });
+              showFeedback("Facture finalisée avec succès (" + (r.invoice ? r.invoice.invoiceNumber : num) + ").");
+              await loadSalesInvoices(activeDossierId);
+            } catch (err) {
+              showFeedback(err.message, true);
+            }
+          });
+        });
+
+        tbody.querySelectorAll(".btn-inv-pay").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const remMinor = parseInt(btn.getAttribute("data-rem") || "0", 10);
+            const defaultAmt = (remMinor / 100).toFixed(2);
+            const amtStr = window.prompt("Montant du règlement en euros :", defaultAmt);
+            if (!amtStr) return;
+            const amt = parseFloat(amtStr);
+            if (isNaN(amt) || amt <= 0) {
+              showFeedback("Montant de règlement invalide.", true);
+              return;
+            }
+            try {
+              await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/payments", {
+                method: "POST",
+                body: JSON.stringify({
+                  amountMinor: Math.round(amt * 100),
+                  paymentMethod: "VIREMENT",
+                  paymentDate: new Date().toISOString().slice(0, 10)
+                })
+              });
+              showFeedback("Règlement de " + amt.toFixed(2) + " € enregistré avec succès.");
+              await loadSalesInvoices(activeDossierId);
+            } catch (err) {
+              showFeedback(err.message, true);
+            }
+          });
+        });
+
+        tbody.querySelectorAll(".btn-inv-credit-note").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const num = btn.getAttribute("data-num");
+            const reason = window.prompt("Motif de l’avoir / annulation pour la facture " + num + " :");
+            if (!reason || !reason.trim()) return;
+            try {
+              const r = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/credit-note", {
+                method: "POST",
+                body: JSON.stringify({ reason: reason.trim() })
+              });
+              showFeedback("Avoir créé avec succès (" + (r.creditNote ? r.creditNote.invoiceNumber : "") + ").");
+              await loadSalesInvoices(activeDossierId);
+            } catch (err) {
+              showFeedback(err.message, true);
+            }
+          });
+        });
+
+        tbody.querySelectorAll(".btn-inv-print").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/printable";
+            try {
+              const resp = await fetch(url, { headers: { "Authorization": "Bearer " + authToken } });
+              if (!resp.ok) throw new Error("Erreur HTTP " + resp.status);
+              const html = await resp.text();
+              const blob = new Blob([html], { type: "text/html" });
+              const blobUrl = URL.createObjectURL(blob);
+              window.open(blobUrl, "_blank");
+            } catch (err) {
+              showFeedback("Impossible d’ouvrir l’aperçu : " + err.message, true);
+            }
+          });
+        });
+
+        tbody.querySelectorAll(".btn-inv-facturx").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-id");
+            const num = btn.getAttribute("data-num") || "facture";
+            const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/sales-invoices/" + id + "/facturx-xml";
+            triggerSecureDownload(url, "facturx_" + num + ".xml");
+          });
+        });
+
+      } catch (err) {
+        showFeedback("Erreur de chargement des factures : " + err.message, true);
+      }
+    }
+
+    async function loadQuotes(dossierId) {
+      if (!activeOrgId || !dossierId) return;
+      try {
+        let query = "/api/organizations/" + activeOrgId + "/dossiers/" + dossierId + "/quotes";
+        if (currentQuotesStatusFilter && currentQuotesStatusFilter !== "ALL") {
+          query += "?status=" + encodeURIComponent(currentQuotesStatusFilter);
+        }
+        const res = await apiFetch(query);
+        const quotes = res.quotes || [];
+        const emptyBox = document.getElementById("quotes-empty");
+        const tbody = document.getElementById("quotes-tbody");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+
+        if (quotes.length === 0) {
+          if (emptyBox) emptyBox.classList.remove("hidden");
+          return;
+        }
+        if (emptyBox) emptyBox.classList.add("hidden");
+
+        quotes.forEach((q) => {
+          const tr = document.createElement("tr");
+
+          let statusBadge = "";
+          if (q.status === "ACCEPTED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Accepté</span>';
+          } else if (q.status === "CONVERTED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Facturé</span>';
+          } else if (q.status === "SENT") {
+            statusBadge = '<span class="badge" style="background:var(--cn-info-bg); color:var(--cn-info); border:1px solid var(--cn-info);">Envoyé</span>';
+          } else if (q.status === "REJECTED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Refusé</span>';
+          } else if (q.status === "EXPIRED") {
+            statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Expiré</span>';
+          } else {
+            statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
+          }
+
+          let actionsHtml = "";
+          if (q.status !== "CONVERTED") {
+            actionsHtml = '<button type="button" class="btn-primary btn-quote-convert" data-id="' + q.id + '" data-num="' + q.quoteNumber + '" style="font-size:0.75rem; padding:3px 7px;">Transformer en Facture</button>';
+          } else {
+            actionsHtml = '<span style="font-size:0.8rem; color:var(--cn-text-secondary);">Facture émise</span>';
+          }
+
+          const netFormatted = (q.totalNetMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const grossFormatted = (q.totalGrossMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+          tr.innerHTML =
+            '<td><strong class="font-mono-tabular" style="font-size:0.85rem;">' + q.quoteNumber + '</strong></td>' +
+            '<td style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + q.thirdPartyName + '">' + q.thirdPartyName + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.85rem;">' + q.issueDate + '</td>' +
+            '<td class="font-mono-tabular" style="font-size:0.85rem;">' + q.validityDate + '</td>' +
+            '<td class="font-mono-tabular" style="text-align:right;">' + netFormatted + ' €</td>' +
+            '<td class="font-mono-tabular" style="text-align:right; font-weight:600;">' + grossFormatted + ' €</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td style="text-align:center; white-space:nowrap;">' + actionsHtml + '</td>';
+
+          tbody.appendChild(tr);
+        });
+
+        tbody.querySelectorAll(".btn-quote-convert").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const num = btn.getAttribute("data-num");
+            if (!window.confirm("Confirmez-vous la transformation du devis " + num + " en facture de vente ?")) return;
+            try {
+              const r = await apiFetch("/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/quotes/" + id + "/convert-to-invoice", {
+                method: "POST",
+                body: JSON.stringify({ isB2B: true })
+              });
+              showFeedback("Devis transformé avec succès en facture (" + (r.invoice ? r.invoice.invoiceNumber : "") + ") !");
+              setInvoicingSubtab("invoices");
+              await loadSalesInvoices(activeDossierId);
+            } catch (err) {
+              showFeedback(err.message, true);
+            }
+          });
+        });
+
+      } catch (err) {
+        showFeedback("Erreur de chargement des devis : " + err.message, true);
+      }
+    }
 
     // =========================================================================
     // MODULE 5 — JOURNAL COMPTABLE & SAISIE AU KILOMÈTRE (Phase 1, Lot 1.5)
