@@ -801,7 +801,10 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           <div id="document-detail-panel" class="card hidden" style="margin-top:1rem; border:2px solid var(--cn-accent-amber);">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.75rem;">
               <div>
-                <h3 id="doc-detail-filename" style="margin:0 0 0.25rem 0;">Examen du document</h3>
+                <h3 style="margin:0 0 0.25rem 0; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                  <span id="doc-detail-filename">Examen du document</span>
+                  <span id="doc-detail-status-badge" class="badge badge-ai">Statut : À réviser</span>
+                </h3>
                 <div style="font-size:0.8rem; color:var(--cn-text-secondary);" id="doc-detail-meta">
                   Empreinte SHA-256 | Taille | Rétention
                 </div>
@@ -3034,6 +3037,23 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         document.getElementById("doc-detail-filename").textContent = selectedDocument.originalFilename;
         document.getElementById("doc-detail-meta").textContent =
           "Empreinte SHA-256 : " + selectedDocument.sha256Checksum + " | Taille : " + (selectedDocument.sizeBytes / 1024).toFixed(1) + " Ko | Conservation légale : jusqu'au " + selectedDocument.retentionUntilDate;
+
+        const detailStMap = {
+          RECEIVED: { label: "Reçu", badgeClass: "badge-draft" },
+          EXTRACTED: { label: "Extrait", badgeClass: "badge-ai" },
+          PENDING_REVIEW: { label: "À réviser", badgeClass: "badge-ai" },
+          CORRECTED: { label: "Corrigé (CORRECTED)", badgeClass: "badge-draft" },
+          VALIDATED: { label: "Validé (VALIDATED)", badgeClass: "badge-valid" },
+          REJECTED: { label: "Rejeté", badgeClass: "badge-draft", style: "background:var(--cn-state-error-bg); color:var(--cn-state-error-text); border:1px solid var(--cn-state-error-border);" },
+          EXPORTED: { label: "Exporté", badgeClass: "badge-valid" }
+        };
+        const currentDetailSt = detailStMap[selectedDocument.workflowStatus] || { label: selectedDocument.workflowStatus, badgeClass: "badge-draft" };
+        const statusBadgeEl = document.getElementById("doc-detail-status-badge");
+        if (statusBadgeEl) {
+          statusBadgeEl.className = "badge " + currentDetailSt.badgeClass;
+          statusBadgeEl.textContent = "Statut : " + currentDetailSt.label;
+          statusBadgeEl.style.cssText = currentDetailSt.style || "";
+        }
 
         const dlBtn = document.getElementById("doc-detail-download-btn");
         dlBtn.href = res.downloadUrl;
