@@ -922,9 +922,9 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
 
         <!-- Sous-onglets internes : Devis / Factures / Nouveau document -->
         <div style="display:flex; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--cn-border); padding-bottom:0.5rem;">
-          <button type="button" id="subtab-btn-invoices" class="btn-primary" style="padding:6px 14px; font-size:0.85rem;">Factures &amp; Avoirs</button>
-          <button type="button" id="subtab-btn-quotes" class="btn-secondary" style="padding:6px 14px; font-size:0.85rem;">Devis clients</button>
-          <button type="button" id="subtab-btn-create" class="btn-secondary" style="padding:6px 14px; font-size:0.85rem;">+ Nouveau devis ou facture</button>
+          <button type="button" id="subtab-btn-invoices" class="btn-primary" onclick="setInvoicingSubtab('invoices')" style="padding:6px 14px; font-size:0.85rem;">Factures &amp; Avoirs</button>
+          <button type="button" id="subtab-btn-quotes" class="btn-secondary" onclick="setInvoicingSubtab('quotes')" style="padding:6px 14px; font-size:0.85rem;">Devis clients</button>
+          <button type="button" id="subtab-btn-create" class="btn-secondary" onclick="setInvoicingSubtab('create')" style="padding:6px 14px; font-size:0.85rem;">+ Nouveau devis ou facture</button>
         </div>
 
         <!-- VUE FACTURES & AVOIRS -->
@@ -1103,7 +1103,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
             </div>
 
             <div style="display:flex; justify-content:flex-end; gap:0.5rem;">
-              <button type="button" id="inv-cancel-create-btn" class="btn-secondary">Annuler</button>
+              <button type="button" id="inv-cancel-create-btn" class="btn-secondary" onclick="setInvoicingSubtab('invoices')">Annuler</button>
               <button type="submit" id="inv-submit-create-btn" class="btn-primary">Enregistrer le document (Brouillon)</button>
             </div>
           </form>
@@ -2026,8 +2026,8 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         }
       }
       if (targetTabId === "tab-invoicing") {
+        setInvoicingSubtab("invoices");
         if (activeDossierId) {
-          setInvoicingSubtab("invoices");
           loadSalesInvoices(activeDossierId);
         }
       }
@@ -3321,28 +3321,34 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       const viewCreate = document.getElementById("subtab-view-create");
 
       if (tab === "invoices") {
-        if (btnInvoices) btnInvoices.className = "btn-primary";
-        if (btnQuotes) btnQuotes.className = "btn-secondary";
-        if (btnCreate) btnCreate.className = "btn-secondary";
-        if (viewInvoices) viewInvoices.classList.remove("hidden");
-        if (viewQuotes) viewQuotes.classList.add("hidden");
-        if (viewCreate) viewCreate.classList.add("hidden");
+        if (btnInvoices) { btnInvoices.className = "btn-primary"; btnInvoices.style.fontWeight = "700"; }
+        if (btnQuotes) { btnQuotes.className = "btn-secondary"; btnQuotes.style.fontWeight = "500"; }
+        if (btnCreate) { btnCreate.className = "btn-secondary"; btnCreate.style.fontWeight = "500"; }
+        if (viewInvoices) { viewInvoices.classList.remove("hidden"); viewInvoices.style.display = "block"; }
+        if (viewQuotes) { viewQuotes.classList.add("hidden"); viewQuotes.style.display = "none"; }
+        if (viewCreate) { viewCreate.classList.add("hidden"); viewCreate.style.display = "none"; }
         if (activeDossierId) loadSalesInvoices(activeDossierId);
       } else if (tab === "quotes") {
-        if (btnInvoices) btnInvoices.className = "btn-secondary";
-        if (btnQuotes) btnQuotes.className = "btn-primary";
-        if (btnCreate) btnCreate.className = "btn-secondary";
-        if (viewInvoices) viewInvoices.classList.add("hidden");
-        if (viewQuotes) viewQuotes.classList.remove("hidden");
-        if (viewCreate) viewCreate.classList.add("hidden");
+        if (btnInvoices) { btnInvoices.className = "btn-secondary"; btnInvoices.style.fontWeight = "500"; }
+        if (btnQuotes) { btnQuotes.className = "btn-primary"; btnQuotes.style.fontWeight = "700"; }
+        if (btnCreate) { btnCreate.className = "btn-secondary"; btnCreate.style.fontWeight = "500"; }
+        if (viewInvoices) { viewInvoices.classList.add("hidden"); viewInvoices.style.display = "none"; }
+        if (viewQuotes) { viewQuotes.classList.remove("hidden"); viewQuotes.style.display = "block"; }
+        if (viewCreate) { viewCreate.classList.add("hidden"); viewCreate.style.display = "none"; }
         if (activeDossierId) loadQuotes(activeDossierId);
       } else if (tab === "create") {
-        if (btnInvoices) btnInvoices.className = "btn-secondary";
-        if (btnQuotes) btnQuotes.className = "btn-secondary";
-        if (btnCreate) btnCreate.className = "btn-primary";
-        if (viewInvoices) viewInvoices.classList.add("hidden");
-        if (viewQuotes) viewQuotes.classList.add("hidden");
-        if (viewCreate) viewCreate.classList.remove("hidden");
+        if (btnInvoices) { btnInvoices.className = "btn-secondary"; btnInvoices.style.fontWeight = "500"; }
+        if (btnQuotes) { btnQuotes.className = "btn-secondary"; btnQuotes.style.fontWeight = "500"; }
+        if (btnCreate) { btnCreate.className = "btn-primary"; btnCreate.style.fontWeight = "700"; }
+        if (viewInvoices) { viewInvoices.classList.add("hidden"); viewInvoices.style.display = "none"; }
+        if (viewQuotes) { viewQuotes.classList.add("hidden"); viewQuotes.style.display = "none"; }
+        if (viewCreate) {
+          viewCreate.classList.remove("hidden");
+          viewCreate.style.display = "block";
+          try {
+            viewCreate.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch {}
+        }
 
         const today = new Date().toISOString().slice(0, 10);
         const in30Days = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
@@ -3350,9 +3356,12 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         const dueInp = document.getElementById("inv-due-date");
         if (issueInp && !issueInp.value) issueInp.value = today;
         if (dueInp && !dueInp.value) dueInp.value = in30Days;
-        recalculateInvoicingTotals();
+        try {
+          recalculateInvoicingTotals();
+        } catch {}
       }
     }
+    window.setInvoicingSubtab = setInvoicingSubtab;
 
     document.getElementById("subtab-btn-invoices")?.addEventListener("click", () => setInvoicingSubtab("invoices"));
     document.getElementById("subtab-btn-quotes")?.addEventListener("click", () => setInvoicingSubtab("quotes"));
@@ -3573,43 +3582,50 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         invoices.forEach((inv) => {
           const tr = document.createElement("tr");
 
+          const status = inv.invoiceStatus || inv.status || "DRAFT";
           let statusBadge = "";
-          if (inv.status === "FINALIZED") {
+          if (status === "FINALIZED") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Finalisée</span>';
-          } else if (inv.status === "PAID") {
+          } else if (status === "PAID") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Soldée</span>';
-          } else if (inv.status === "PARTIALLY_PAID") {
+          } else if (status === "PARTIALLY_PAID") {
             statusBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning); border:1px solid var(--cn-warning);">Partielle</span>';
-          } else if (inv.status === "CANCELLED") {
+          } else if (status === "CANCELLED") {
             statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Avoir</span>';
           } else {
             statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
           }
 
           let paymentBadge = "";
-          if (inv.paymentStatus === "PAID") {
+          const paySt = inv.paymentStatus || "UNPAID";
+          if (paySt === "PAID") {
             paymentBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success);">Réglée</span>';
-          } else if (inv.paymentStatus === "PARTIAL") {
+          } else if (paySt === "PARTIAL") {
             paymentBadge = '<span class="badge" style="background:var(--cn-warning-bg); color:var(--cn-warning);">Partiel</span>';
           } else {
             paymentBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary);">Non réglée</span>';
           }
 
           let actionsHtml = "";
-          if (inv.status === "DRAFT") {
+          if (status === "DRAFT") {
             actionsHtml += '<button type="button" class="btn-primary btn-inv-finalize" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Finaliser</button>';
           }
-          if (inv.status === "FINALIZED" || inv.status === "PARTIALLY_PAID") {
-            actionsHtml += '<button type="button" class="btn-primary btn-inv-pay" data-id="' + inv.id + '" data-rem="' + inv.remainingAmountMinor + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Régler</button>';
+          if (status === "FINALIZED" || status === "PARTIALLY_PAID") {
+            actionsHtml += '<button type="button" class="btn-primary btn-inv-pay" data-id="' + inv.id + '" data-rem="' + (inv.remainingAmountMinor || 0) + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Régler</button>';
             actionsHtml += '<button type="button" class="btn-secondary btn-inv-credit-note" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px; color:var(--cn-warning);">Avoir</button>';
           }
           actionsHtml += '<button type="button" class="btn-secondary btn-inv-print" data-id="' + inv.id + '" style="font-size:0.75rem; padding:3px 7px; margin-right:4px;">Imprimer</button>';
           actionsHtml += '<button type="button" class="btn-secondary btn-inv-facturx" data-id="' + inv.id + '" data-num="' + inv.invoiceNumber + '" style="font-size:0.75rem; padding:3px 7px;">Factur-X</button>';
 
-          const netFormatted = (inv.totalNetMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const grossFormatted = (inv.totalGrossMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const paidFormatted = (inv.paidAmountMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          const remFormatted = (inv.remainingAmountMinor / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const netVal = (inv.netAmountMinor !== undefined ? inv.netAmountMinor : (inv.totalNetMinor || 0)) / 100;
+          const grossVal = (inv.grossAmountMinor !== undefined ? inv.grossAmountMinor : (inv.totalGrossMinor || 0)) / 100;
+          const paidVal = (inv.paidAmountMinor || 0) / 100;
+          const remVal = (inv.remainingAmountMinor !== undefined ? inv.remainingAmountMinor : Math.max(0, (grossVal - paidVal) * 100)) / 100;
+
+          const netFormatted = netVal.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const grossFormatted = grossVal.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const paidFormatted = paidVal.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const remFormatted = remVal.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
           tr.innerHTML =
             '<td><strong class="font-mono-tabular" style="font-size:0.85rem;">' + inv.invoiceNumber + '</strong></td>' +
@@ -3744,23 +3760,24 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
         quotes.forEach((q) => {
           const tr = document.createElement("tr");
 
+          const qStatus = q.quoteStatus || q.status || "DRAFT";
           let statusBadge = "";
-          if (q.status === "ACCEPTED") {
+          if (qStatus === "ACCEPTED") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Accepté</span>';
-          } else if (q.status === "CONVERTED") {
+          } else if (qStatus === "CONVERTED") {
             statusBadge = '<span class="badge" style="background:var(--cn-success-bg); color:var(--cn-success); border:1px solid var(--cn-success);">Facturé</span>';
-          } else if (q.status === "SENT") {
+          } else if (qStatus === "SENT") {
             statusBadge = '<span class="badge" style="background:var(--cn-info-bg); color:var(--cn-info); border:1px solid var(--cn-info);">Envoyé</span>';
-          } else if (q.status === "REJECTED") {
+          } else if (qStatus === "REJECTED") {
             statusBadge = '<span class="badge" style="background:var(--cn-danger-bg); color:var(--cn-danger); border:1px solid var(--cn-danger);">Refusé</span>';
-          } else if (q.status === "EXPIRED") {
+          } else if (qStatus === "EXPIRED") {
             statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Expiré</span>';
           } else {
             statusBadge = '<span class="badge" style="background:var(--cn-surface-alt); color:var(--cn-text-secondary); border:1px solid var(--cn-border);">Brouillon</span>';
           }
 
           let actionsHtml = "";
-          if (q.status !== "CONVERTED") {
+          if (qStatus !== "CONVERTED") {
             actionsHtml = '<button type="button" class="btn-primary btn-quote-convert" data-id="' + q.id + '" data-num="' + q.quoteNumber + '" style="font-size:0.75rem; padding:3px 7px;">Transformer en Facture</button>';
           } else {
             actionsHtml = '<span style="font-size:0.8rem; color:var(--cn-text-secondary);">Facture émise</span>';
