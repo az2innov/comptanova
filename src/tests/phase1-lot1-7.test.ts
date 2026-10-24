@@ -307,25 +307,45 @@ describe("PHASE 1 — LOT 1.7 : Modules 7, 8 & 9 — Simulations, Exports CSV/FE
   // =========================================================================
   describe("2. Exports Sécurisés CSV Anti-Injection (Module 9)", () => {
     it("2.1 Neutralisation stricte des cellules tableur (CSV Injection / DDE)", () => {
-      // Formule classique avec signe =
+      // 1. Formules directes avec signe =, +, @
       assert.equal(sanitizeCsvCell("=SUM(A1:A10)"), "'=SUM(A1:A10)");
-      // Formule avec signe +
       assert.equal(sanitizeCsvCell("+cmd|' /C calc'!A0"), "'+cmd|' /C calc'!A0");
-      assert.ok(sanitizeCsvCell("+1234").startsWith("'+"));
-      // Formule avec caractère @ ou tabulation
       assert.equal(sanitizeCsvCell("@SUM(1,2)"), `"'@SUM(1,2)"`);
-      assert.equal(sanitizeCsvCell("\t=1+1"), `'\t=1+1`);
+
+      // 2. Espaces et blancs précédant les caractères déclencheurs (=, +, @, -)
+      assert.equal(sanitizeCsvCell("   =SUM(A1:A10)"), "'   =SUM(A1:A10)");
+      assert.equal(sanitizeCsvCell("  +1234"), "'  +1234");
+      assert.equal(sanitizeCsvCell("   @IMPORT(URL)"), "'   @IMPORT(URL)");
+      assert.equal(sanitizeCsvCell("   -calc"), "'   -calc");
+
+      // 3. Tabulations, retours à la ligne et combinaisons de caractères de contrôle
+      assert.equal(sanitizeCsvCell("\t=1+1"), `"'\t=1+1"`);
       assert.equal(sanitizeCsvCell("\r=CMD"), `"'\r=CMD"`);
+      assert.equal(sanitizeCsvCell(" \t +SUM(1,2)"), `"' \t +SUM(1,2)"`);
+      assert.equal(sanitizeCsvCell("\r\n@EVIL"), `"'\r\n@EVIL"`);
+      assert.equal(sanitizeCsvCell("\t"), `"'\t"`);
+      assert.equal(sanitizeCsvCell("\r"), `"'\r"`);
 
-      // Nombre négatif légitime : NE DOIT PAS être corrompu par une apostrophe
-      assert.equal(sanitizeCsvCell("-120.50"), "-120.50");
-      assert.equal(sanitizeCsvCell("-49.00"), "-49.00");
-      assert.equal(sanitizeCsvCell("-1500"), "-1500");
+      // 4. Montants négatifs numériques légitimes et vérifiés : PRÉSERVÉS SANS APOSTROPHE
+      // A. Type number direct
+      assert.equal(sanitizeCsvCell(-120.50), "-120.5");
+      assert.equal(sanitizeCsvCell(-49), "-49");
+      // B. Chaîne explicitement déclarée et validée numérique (isNumeric: true)
+      assert.equal(sanitizeCsvCell("-120.50", { isNumeric: true }), "-120.50");
+      assert.equal(sanitizeCsvCell("-49.00", { isNumeric: true }), "-49.00");
+      assert.equal(sanitizeCsvCell("-1500", { isNumeric: true }), "-1500");
+      assert.equal(sanitizeCsvCell({ value: "-120.50", isNumeric: true }), "-120.50");
 
-      // Formule négative avec lettres : DOIT être neutralisée
+      // 5. Chaînes textuelles non fiables (libellés, tiers, codes) commençant par '-' : SYSTEMATIQUEMENT NEUTRALISÉES
+      // Sans l'option isNumeric, aucun texte n'est exempté
+      assert.equal(sanitizeCsvCell("-120.50"), "'-120.50");
+      assert.equal(sanitizeCsvCell("   -120.50"), "'   -120.50");
+      assert.equal(sanitizeCsvCell("-Avoir client 2026"), "'-Avoir client 2026");
       assert.equal(sanitizeCsvCell("-cmd|' /C calc'!A0"), "'-cmd|' /C calc'!A0");
+      // Valeur revendiquée isNumeric mais contenant du texte suspect : rejet de l'exemption et neutralisation
+      assert.equal(sanitizeCsvCell("-120.50; DROP TABLE", { isNumeric: true }), `"'-120.50; DROP TABLE"`);
 
-      // Échappement RFC 4180 : guillemets doubles et sauts de ligne
+      // 6. Échappement RFC 4180 : guillemets doubles et sauts de ligne
       assert.equal(sanitizeCsvCell('Bonjour "Monde"'), '"Bonjour ""Monde"""');
       assert.equal(sanitizeCsvCell("Ligne1\nLigne2"), '"Ligne1\nLigne2"');
     });
@@ -472,6 +492,59 @@ describe("PHASE 1 — LOT 1.7 : Modules 7, 8 & 9 — Simulations, Exports CSV/FE
       });
 
       assert.ok(!fec.content.includes("DRAFT-EXCLUDED"), "Une écriture brouillon ne doit jamais être incluse dans le FEC");
+    });
+
+    it("3.3 Vérification approfondie du FEC : nommage DGFiP (SIREN/SIRET), 18 colonnes strictes, nettoyage tabulations/CRLF et filtres par période", () => {
+      // 1. Mise à jour du SIRET du dossier (14 chiffres) pour tester l'extraction du SIREN (9 chiffres)
+      db.prepare(`UPDATE client_dossiers SET legal_registration_number = '88899911100012' WHERE id = ?`).run(dossierA.id);
+
+      // 2. Création d'une écriture validée en juin 2026 avec libellé contenant tabulations et retours à la ligne
+      const entryTricky = createAccountingEntry({
+        session: firmAdmin,
+        organizationId: orgAId,
+        dossierId: dossierA.id,
+        journalCode: "AC",
+        entryDate: "2026-06-15",
+        pieceNumber: "AC-2026-0042",
+        label: "Achat spécial\tFournitures\r\nBureautique",
+        status: "DRAFT",
+        currency: "EUR",
+        lines: [
+          { lineNumber: 1, generalAccountCode: "606400", label: "Ligne 1\tavec tab\net saut", debitMinor: 50000, creditMinor: 0 },
+          { lineNumber: 2, generalAccountCode: "401000", label: "Fournisseur Test", debitMinor: 0, creditMinor: 50000 },
+        ],
+        db,
+      });
+
+      validateAccountingEntry({
+        session: firmAdmin,
+        organizationId: orgAId,
+        dossierId: dossierA.id,
+        entryId: entryTricky.id,
+        db,
+      });
+
+      // 3. Export filtré sur juin 2026
+      const fecJune = exportService.exportFecTxt(firmAdmin, orgAId, dossierA.id, {
+        startDate: "2026-06-01",
+        endDate: "2026-06-30",
+        decimalSeparator: ",",
+      });
+
+      // Nommage conforme art. A.47 A-1 VII LPF : 9 chiffres SIREN + FEC + AAAAMMJJ
+      assert.equal(fecJune.filename, "888999111FEC20260630.txt", "Le nom du fichier FEC doit extraire le SIREN à 9 chiffres du SIRET");
+
+      const lines = fecJune.content.split("\r\n").filter((l) => l.length > 0);
+      assert.ok(lines.length >= 3, "Le FEC filtré doit contenir l'en-tête et les 2 lignes d'écriture");
+
+      // Vérifier chaque ligne : AUCUNE rupture de colonnes malgré les tabulations/sauts de ligne dans le libellé
+      for (let i = 0; i < lines.length; i++) {
+        const cols = lines[i]!.split("\t");
+        assert.equal(cols.length, 18, `La ligne ${i} du FEC doit comporter rigoureusement 18 colonnes`);
+      }
+
+      // Vérifier que l'écriture de mars 2026 (entry1) est bien exclue par le filtre de période
+      assert.ok(!fecJune.content.includes("FAC-TEST-FEC"), "Le filtre par date doit exclure les écritures hors période");
     });
   });
 

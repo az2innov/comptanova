@@ -468,6 +468,26 @@
 - **Arrêt et point d'étape** :
   - Fin d'exécution du Lot 1.7. Arrêt strict sans push distant sur `origin/main`, dans l'attente des instructions de l'utilisateur.
 
+---
+
+## ACT-0019 — 2026-10-24T12:45:00+01:00 — Clôture de la Phase 1 : Vérifications Complémentaires FEC/CSV, Renforcement Sécuritaire et Rapport Final (Section 38)
+- **Objectif** : Exécuter l'ensemble des vérifications ciblées prescrites par la décision de revue de clôture Phase 1 (contrôle approfondi du générateur FEC art. A.47 A-1 LPF, nettoyage systématique des tabulations/CRLF pour garantir 18 colonnes strictes sans rupture, extraction automatique du SIREN 9 chiffres depuis un SIRET 14 chiffres, renforcement de la neutralisation CSV DDE avec protection contre les formules précédées d'espaces/blancs, fiabilisation stricte de l'exception des nombres négatifs réservée aux seules valeurs validées numériques et jamais aux données textuelles, ajout de tests automatisés dédiés portant la couverture à 98 tests passants), et rédaction du Rapport Final d'Implémentation et de Recette Technique de la Phase 1 (`docs/PHASE1_FINAL_REPORT.md`).
+- **Périmètre & Fichiers modifiés** :
+  1. `src/services/export-service.ts` :
+     - Refonte de `sanitizeCsvCell` avec typage `SanitizeCellOptions` (`isNumeric`) : détection des déclencheurs de formule (`=`, `+`, `-`, `@`, `\t`, `\r`) même précédés d'espaces ou de blancs (`^[ \t\r\n]*([=+\-@\t\r])`) ; exception de préservation du signe négatif restreinte strictement aux cellules validées comme numériques (`Number.isFinite(Number(trimmedNum))`), neutralisation systématique de tout texte ou libellé débutant par un tiret (ex: `'-Avoir client'`).
+     - Sécurisation du générateur `exportFecTxt` : assainissement systématique des chaînes de texte (`cleanFecField`) éliminant les tabulations et sauts de ligne internes pouvant fausser le découpage en 18 colonnes ; extraction automatique du SIREN à 9 chiffres pour le nommage officiel `<SIREN>FEC<YYYYMMDD>.txt` même lorsque le dossier est configuré avec un SIRET à 14 chiffres.
+     - Prise en charge des métadonnées `{ value, isNumeric }` dans les tableaux de cellules des 5 exports CSV.
+  2. `src/tests/phase1-lot1-7.test.ts` :
+     - Enrichissement du test 2.1 avec les cas limites de formules précédées d'espaces/blancs, combinaisons de tabulations/CRLF, et validation stricte du comportement des montants négatifs (autorisés si numériques, neutralisés si textuels).
+     - Ajout du test 3.3 vérifiant le respect absolu des 18 colonnes FEC par ligne malgré la présence de tabulations/retours à la ligne dans les libellés, l'extraction du SIREN 9 chiffres depuis un SIRET 14 chiffres pour le nommage du fichier, et le filtrage strict par période.
+  3. `docs/PHASE1_FINAL_REPORT.md` *(NOUVEAU)* :
+     - Rapport final complet de la Phase 1 conforme à la Section 38 : synthèse exécutive, distinction explicite des 4 niveaux de maturité (implémenté, testé, validé métier, certifié réglementaire), bilan détaillé des 9 modules livrés, traçabilité des commits et des 8 migrations, preuves d'exécution des 98 tests automatisés, matrice du grand parcours E2E en 17 étapes, limites fonctionnelles et réglementaires, registre des 4 risques ouverts avec contrôles pré-production obligatoires, et recommandation motivée sur le push git.
+- **Résultats des tests** :
+  - Commande : `npm run typecheck && npm test`
+  - Résultat : **98/98 tests passants** (16 suites de tests, 0 échec, durée `2506.24 ms`). `npm run typecheck` à 0 erreur.
+- **Arrêt et point d'étape** :
+  - Clôture officielle de la Phase 1. Arrêt strict sans push distant sur `origin/main`, dans l'attente de l'autorisation explicite de l'utilisateur.
+
 
 
 

@@ -17,57 +17,86 @@ function resolveActorRole(
   return m ? m.role : "AUTHENTICATED_USER";
 }
 
+export interface SanitizeCellOptions {
+  isNumeric?: boolean;
+}
+
 /**
  * Assainit une cellule pour l'export CSV afin de neutraliser toute tentative de CSV Injection (DDE / formule malveillante).
  *
- * Règle de sécurité :
- * 1. Supprime les caractères de contrôle non imprimables (hors retour chariot/ligne standards).
- * 2. Si une valeur textuelle commence par l'un des caractères déclencheurs de formule (=, +, -, @, \t, \r),
- *    même précédée d'espaces, elle est systématiquement neutralisée par un préfixe apostrophe (').
- * 3. Exception stricte pour l'intégrité arithmétique : les nombres réels signés légitimes (ex: -150.00 ou +42)
- *    ne sont pas altérés afin de préserver l'analyse numérique dans les tableurs.
- * 4. Respecte le standard RFC 4180 : si la cellule contient des guillemets, virgules, points-virgules ou sauts de ligne,
- *    elle est entourée de guillemets doubles et ses guillemets internes sont doublés ("").
+ * Règles strictes de sécurité et d'intégrité :
+ * 1. Supprime les caractères de contrôle non imprimables (hors tabulation, retour chariot et saut de ligne).
+ * 2. Vérification stricte des montants numériques :
+ *    - Seules les valeurs explicitement reconnues et validées comme numériques (isNumeric: true ou typeof value === 'number')
+ *      sont autorisées à conserver un signe négatif '-' sans préfixe apostrophe (ex: -120.50).
+ *    - Cette exception ne s'applique JAMAIS aux libellés, désignations de tiers ou chaînes de texte non fiables.
+ * 3. Protection CSV Injection / DDE :
+ *    - Toute cellule textuelle dont le contenu (y compris précédé d'espaces, tabulations ou retours chariot)
+ *      commence par un caractère déclencheur (=, +, -, @, \t, \r) est systématiquement neutralisée par un préfixe apostrophe (').
+ * 4. Respect du standard RFC 4180 :
+ *    - Si la cellule contient des guillemets doubles, virgules, points-virgules, tabulations ou sauts de ligne,
+ *      elle est entourée de guillemets doubles et ses guillemets internes sont doublés ("").
  */
-export function sanitizeCsvCell(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? String(value) : "";
-  }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
+export function sanitizeCsvCell(
+  value: unknown,
+  options?: SanitizeCellOptions | number
+): string {
+  let isNumeric =
+    typeof options === "object" && options !== null && options.isNumeric === true;
+  let rawValue = value;
+
+  // Support des cellules encapsulées avec métadonnées { value, isNumeric }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "value" in value &&
+    "isNumeric" in value
+  ) {
+    rawValue = (value as { value: unknown }).value;
+    isNumeric = (value as { isNumeric?: boolean }).isNumeric === true;
   }
 
-  let str = String(value);
+  if (rawValue === null || rawValue === undefined) {
+    return "";
+  }
+
+  if (typeof rawValue === "number") {
+    return Number.isFinite(rawValue) ? String(rawValue) : "";
+  }
+
+  if (typeof rawValue === "boolean") {
+    return rawValue ? "true" : "false";
+  }
+
+  let str = String(rawValue);
 
   // 1. Suppression des caractères de contrôle non imprimables
   str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
-  // 2. Protection CSV Injection / DDE
-  const trimmed = str.trimStart();
-  const isPlainSignedNumber = /^-?\d+(\.\d+)?$/.test(str.trim());
-
-  if (!isPlainSignedNumber && trimmed.length > 0) {
-    const firstChar = trimmed[0];
-    if (
-      firstChar === "=" ||
-      firstChar === "+" ||
-      firstChar === "-" ||
-      firstChar === "@" ||
-      firstChar === "\t" ||
-      firstChar === "\r"
-    ) {
-      str = "'" + str;
+  // 2. Vérification stricte pour les montants numériques déclarés
+  if (isNumeric) {
+    const trimmedNum = str.trim();
+    const isStrictNumber = /^-?\d+(\.\d+)?$/.test(trimmedNum);
+    if (isStrictNumber && Number.isFinite(Number(trimmedNum))) {
+      return trimmedNum;
     }
+    // Si isNumeric était revendiqué mais que la valeur n'est pas un nombre strict,
+    // on retire l'exemption pour la traiter comme texte non fiable.
   }
 
-  // 3. Échappement RFC 4180
+  // 3. Protection CSV Injection / DDE
+  // Détecte si la cellule commence par un déclencheur (=, +, -, @, \t, \r), même précédé d'espaces ou de blancs
+  const triggerMatch = str.match(/^[ \t\r\n]*([=+\-@\t\r])/);
+  if (triggerMatch) {
+    str = "'" + str;
+  }
+
+  // 4. Échappement RFC 4180
   if (
     str.includes('"') ||
     str.includes(",") ||
     str.includes(";") ||
+    str.includes("\t") ||
     str.includes("\n") ||
     str.includes("\r")
   ) {
@@ -146,7 +175,7 @@ export class ExportService {
     ];
 
     const lines: string[] = [];
-    lines.push(headers.map(sanitizeCsvCell).join(delimiter));
+    lines.push(headers.map((h) => sanitizeCsvCell(h)).join(delimiter));
 
     for (const r of rows) {
       const net = (r.net_amount_minor / 100).toFixed(2);
@@ -155,24 +184,24 @@ export class ExportService {
       const paid = (r.paid_amount_minor / 100).toFixed(2);
       const remaining = ((r.gross_amount_minor - r.paid_amount_minor) / 100).toFixed(2);
 
-      const cells = [
+      const cells: unknown[] = [
         r.id,
         r.invoice_number,
         r.direction,
         r.third_party_name,
         r.issue_date,
         r.due_date || "",
-        net,
-        vat,
-        gross,
-        paid,
-        remaining,
+        { value: net, isNumeric: true },
+        { value: vat, isNumeric: true },
+        { value: gross, isNumeric: true },
+        { value: paid, isNumeric: true },
+        { value: remaining, isNumeric: true },
         r.currency,
         r.payment_status,
         r.validation_status,
         r.created_at,
       ];
-      lines.push(cells.map(sanitizeCsvCell).join(delimiter));
+      lines.push(cells.map((c) => sanitizeCsvCell(c)).join(delimiter));
     }
 
     // BOM UTF-8 (\uFEFF) pour compatibilité Excel
@@ -259,29 +288,29 @@ export class ExportService {
     ];
 
     const lines: string[] = [];
-    lines.push(headers.map(sanitizeCsvCell).join(delimiter));
+    lines.push(headers.map((h) => sanitizeCsvCell(h)).join(delimiter));
 
     for (const r of rows) {
       const amount = (r.amount_minor / 100).toFixed(2);
       const reconciled = (r.reconciled_amount_minor / 100).toFixed(2);
       const remaining = ((Math.abs(r.amount_minor) - r.reconciled_amount_minor) / 100).toFixed(2);
 
-      const cells = [
+      const cells: unknown[] = [
         r.id,
         r.operation_date,
         r.value_date || "",
         r.label,
         r.counterparty_name || "",
         r.payment_reference || "",
-        amount,
-        reconciled,
-        remaining,
+        { value: amount, isNumeric: true },
+        { value: reconciled, isNumeric: true },
+        { value: remaining, isNumeric: true },
         r.currency,
         r.reconciliation_status,
         r.linked_invoices || "",
         r.created_at,
       ];
-      lines.push(cells.map(sanitizeCsvCell).join(delimiter));
+      lines.push(cells.map((c) => sanitizeCsvCell(c)).join(delimiter));
     }
 
     const content = "\uFEFF" + lines.join("\r\n");
@@ -367,13 +396,13 @@ export class ExportService {
     ];
 
     const lines: string[] = [];
-    lines.push(headers.map(sanitizeCsvCell).join(delimiter));
+    lines.push(headers.map((h) => sanitizeCsvCell(h)).join(delimiter));
 
     for (const r of rows) {
       const debit = (r.debit_minor / 100).toFixed(2);
       const credit = (r.credit_minor / 100).toFixed(2);
 
-      const cells = [
+      const cells: unknown[] = [
         r.entry_id,
         r.journal_code,
         r.entry_date,
@@ -385,12 +414,12 @@ export class ExportService {
         r.account_label || "",
         r.auxiliary_account_code || "",
         r.line_label,
-        debit,
-        credit,
+        { value: debit, isNumeric: true },
+        { value: credit, isNumeric: true },
         r.reconciliation_lettrage_code || "",
         r.validated_at || "",
       ];
-      lines.push(cells.map(sanitizeCsvCell).join(delimiter));
+      lines.push(cells.map((c) => sanitizeCsvCell(c)).join(delimiter));
     }
 
     const content = "\uFEFF" + lines.join("\r\n");
@@ -469,7 +498,7 @@ export class ExportService {
     ];
 
     const lines: string[] = [];
-    lines.push(headers.map(sanitizeCsvCell).join(delimiter));
+    lines.push(headers.map((h) => sanitizeCsvCell(h)).join(delimiter));
 
     for (const r of rows) {
       const cells = [
@@ -486,7 +515,7 @@ export class ExportService {
         r.detected_at,
         r.resolved_at || "",
       ];
-      lines.push(cells.map(sanitizeCsvCell).join(delimiter));
+      lines.push(cells.map((c) => sanitizeCsvCell(c)).join(delimiter));
     }
 
     const content = "\uFEFF" + lines.join("\r\n");
@@ -562,7 +591,7 @@ export class ExportService {
     ];
 
     const lines: string[] = [];
-    lines.push(headers.map(sanitizeCsvCell).join(delimiter));
+    lines.push(headers.map((h) => sanitizeCsvCell(h)).join(delimiter));
 
     for (const r of rows) {
       const cells = [
@@ -577,7 +606,7 @@ export class ExportService {
         r.ip_address || "",
         r.integrity_hash,
       ];
-      lines.push(cells.map(sanitizeCsvCell).join(delimiter));
+      lines.push(cells.map((c) => sanitizeCsvCell(c)).join(delimiter));
     }
 
     const content = "\uFEFF" + lines.join("\r\n");
@@ -716,6 +745,11 @@ export class ExportService {
     const lines: string[] = [];
     lines.push(fecHeaders.join("\t"));
 
+    const cleanFecField = (val: unknown): string => {
+      if (val === null || val === undefined) return "";
+      return String(val).replace(/[\t\r\n]/g, " ").trim();
+    };
+
     for (const r of rows) {
       const ecritureDate = r.entry_date.replace(/-/g, "");
       const pieceDate = ecritureDate;
@@ -734,20 +768,20 @@ export class ExportService {
       const dateLet = lettrage ? ecritureDate : "";
 
       const rowCols = [
-        r.journal_code,
-        journalLib,
-        r.piece_number,
+        cleanFecField(r.journal_code),
+        cleanFecField(journalLib),
+        cleanFecField(r.piece_number),
         ecritureDate,
-        r.general_account_code,
-        compteLib,
-        compAuxNum,
-        compAuxLib,
-        r.piece_number,
+        cleanFecField(r.general_account_code),
+        cleanFecField(compteLib),
+        cleanFecField(compAuxNum),
+        cleanFecField(compAuxLib),
+        cleanFecField(r.piece_number),
         pieceDate,
-        r.line_label || r.entry_label,
+        cleanFecField(r.line_label || r.entry_label),
         debitStr,
         creditStr,
-        lettrage,
+        cleanFecField(lettrage),
         dateLet,
         validDate,
         "", // Montantdevise
@@ -760,10 +794,16 @@ export class ExportService {
     // Formatage texte standard avec fin de ligne CRLF
     const content = lines.join("\r\n");
 
-    // Convention de nommage DGFiP : <SIREN>FEC<YYYYMMDD>.txt
-    const cleanSiren = (dossier.legalRegistrationNumber || "").replace(/\D/g, "");
+    // Convention de nommage DGFiP (art. A.47 A-1 VII LPF) : <SIREN>FEC<YYYYMMDD>.txt
+    const cleanRegNum = (dossier.legalRegistrationNumber || "").replace(/\D/g, "");
+    let siren = "";
+    if (cleanRegNum.length === 9) {
+      siren = cleanRegNum;
+    } else if (cleanRegNum.length === 14) {
+      siren = cleanRegNum.substring(0, 9);
+    }
     const closingDateStr = (options.endDate || new Date().toISOString().substring(0, 10)).replace(/-/g, "");
-    const baseCode = cleanSiren.length === 9 ? cleanSiren : (dossier.code || "DOSSIER");
+    const baseCode = siren || (dossier.code || "DOSSIER");
     const filename = `${baseCode}FEC${closingDateStr}.txt`;
 
     const disclaimer =
