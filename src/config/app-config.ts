@@ -163,7 +163,9 @@ export function getAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       | "postgresql",
     databasePath:
       env.DATABASE_PATH ||
-      (nodeEnv === "test" ? ":memory:" : "./data/app.db"),
+      (nodeEnv === "test"
+        ? ":memory:"
+        : path.resolve(import.meta.dirname, "../../data/app.db")),
     databaseUrl:
       env.DATABASE_URL ||
       "postgresql://postgres:postgres@localhost:5432/comptanova",
