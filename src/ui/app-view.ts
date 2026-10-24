@@ -1899,6 +1899,29 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
     let cachedMembers = [];
     let cachedCountries = [];
 
+    window.auditLogVisible = true;
+    function toggleAuditLogSection() {
+      window.auditLogVisible = !window.auditLogVisible;
+      const container = document.getElementById("audit-table-container");
+      const btn = document.getElementById("toggle-audit-btn");
+      if (container) {
+        if (window.auditLogVisible) {
+          container.classList.remove("hidden");
+          container.style.display = "block";
+        } else {
+          container.classList.add("hidden");
+          container.style.display = "none";
+        }
+      }
+      if (btn) {
+        const rows = document.querySelectorAll("#audit-tbody tr").length;
+        btn.textContent = window.auditLogVisible
+          ? "🔽 Masquer le journal"
+          : ("▶️ Afficher le journal d'audit" + (rows > 0 ? " (" + rows + " entrées)" : ""));
+      }
+    }
+    window.toggleAuditLogSection = toggleAuditLogSection;
+
     function applyLanguage(langCode) {
       const desc = LOCALES_CATALOG[langCode] || LOCALES_CATALOG.fr;
       const d = DICTIONARIES[desc.languageCode] || DICTIONARIES.fr;
@@ -2294,7 +2317,7 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
           ).join("");
 
           const toggleBtn = document.getElementById("toggle-audit-btn");
-          if (toggleBtn && typeof auditLogVisible !== "undefined" && !auditLogVisible) {
+          if (toggleBtn && window.auditLogVisible === false) {
             toggleBtn.textContent = "▶️ Afficher le journal d'audit (" + logs.length + " entrées)";
           }
         } catch (err) {
@@ -5325,23 +5348,6 @@ export function renderAppHtml(requestedLang: string = "fr"): string {
       const url = "/api/organizations/" + activeOrgId + "/dossiers/" + activeDossierId + "/exports/fec?decimalSeparator=" + encodeURIComponent(decimalSeparator) + "&closingDate=" + encodeURIComponent(closingDate);
       triggerSecureDownload(url, "export_fec.txt");
     });
-
-    let auditLogVisible = true;
-    function toggleAuditLogSection() {
-      auditLogVisible = !auditLogVisible;
-      const container = document.getElementById("audit-table-container");
-      const btn = document.getElementById("toggle-audit-btn");
-      if (container) {
-        container.style.display = auditLogVisible ? "block" : "none";
-      }
-      if (btn) {
-        const rows = document.querySelectorAll("#audit-tbody tr").length;
-        btn.textContent = auditLogVisible
-          ? "🔽 Masquer le journal"
-          : ("▶️ Afficher le journal d'audit" + (rows > 0 ? " (" + rows + " entrées)" : ""));
-      }
-    }
-    window.toggleAuditLogSection = toggleAuditLogSection;
 
     document.getElementById("toggle-audit-btn")?.addEventListener("click", toggleAuditLogSection);
 
